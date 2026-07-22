@@ -4,18 +4,33 @@ Catalyst AI is an AI Product Analysis Assistant designed to help product teams e
 
 ## Vision
 
-The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports multi-document upload and text extraction as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
+The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports multi-document upload, text extraction, and local document preprocessing as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
 
 ## Current Features
 
 - A Streamlit landing page for Catalyst AI.
 - Multi-document Upload & Text Extraction for PDF, DOCX, and TXT files.
-- Per-document metadata table, including file name, file type, file size, page count, word count, and extraction status.
-- Combined in-memory product context that concatenates extracted text in upload order with clear document separators.
-- Summary statistics for total documents, total pages, and total words.
+- Local document preprocessing after extraction, including duplicate blank-line removal, repeated-space normalization, leading/trailing whitespace trimming, and paragraph separation preservation where possible.
+- Per-document metadata table, including file name, file type, file size, page count, word count, character count, and processing status.
+- Internal Product Context object containing document metadata, cleaned text, combined text, and overall statistics for future analysis workflows.
+- Combined in-memory product context that concatenates cleaned text in upload order with clear document-name separators.
+- Project statistics summary card for total documents, total pages, total words, and total characters.
+- Document Processing Pipeline UI that confirms upload, extraction, cleaning, and Product Context readiness.
 - Scrollable combined-text preview for uploaded business documents.
 - A Python project structure for agents, services, prompts, data, models, utilities, and documentation.
 - Example environment configuration.
+
+## Document Preprocessing
+
+After supported files are uploaded and text extraction completes, Catalyst AI runs a local preprocessing stage before any future AI analysis. The preprocessing layer:
+
+- Cleans extracted text by removing duplicate blank lines, replacing repeated spaces with a single space, trimming leading and trailing whitespace, and preserving paragraph separation where possible.
+- Preserves document boundaries by inserting clear separators with each document name when multiple documents are combined.
+- Calculates per-document metadata: file name, file type, file size, page count, word count, and character count.
+- Calculates overall project statistics: total documents, total pages, total words, and total characters.
+- Builds an internal Product Context object with document metadata, cleaned text by file, combined text, and overall statistics.
+
+All preprocessing runs locally in the Streamlit app. This stage does not call OpenAI or any other AI model.
 
 ## Project Structure
 
@@ -88,7 +103,7 @@ Catalyst-AI/
 
 ## Environment Variables
 
-The `.env.example` file documents expected local configuration values. Future AI-enabled features will use `OPENAI_API_KEY`, but the current document extraction workflow does not call any AI services.
+The `.env.example` file documents expected local configuration values. Future AI-enabled features will use `OPENAI_API_KEY`, but the current document extraction and preprocessing workflow does not call any AI services.
 
 ## Development Notes
 
