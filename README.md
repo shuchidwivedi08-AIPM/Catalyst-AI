@@ -4,15 +4,15 @@ Catalyst AI is an AI Product Analysis Assistant designed to help product teams e
 
 ## Vision
 
-The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version establishes a clean foundation for future capabilities without implementing document upload, retrieval-augmented generation (RAG), or AI functionality yet.
+The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports document upload and text extraction as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
 
-## Current Scope
+## Current Features
 
-Version 1.0 includes:
-
-- A basic Streamlit landing page.
+- A Streamlit landing page for Catalyst AI.
+- Document Upload & Text Extraction for PDF, DOCX, and TXT files.
+- Document metadata display, including file name, file type, file size, PDF page count, and word count.
+- Scrollable extracted-text preview for uploaded business documents.
 - A Python project structure for agents, services, prompts, data, models, utilities, and documentation.
-- Minimal dependencies required for the foundation setup.
 - Example environment configuration.
 
 ## Project Structure
@@ -86,19 +86,20 @@ Catalyst-AI/
 
 ## Environment Variables
 
-The `.env.example` file documents expected local configuration values. Future AI-enabled features will use `OPENAI_API_KEY`, but the current foundation page does not call any AI services.
+The `.env.example` file documents expected local configuration values. Future AI-enabled features will use `OPENAI_API_KEY`, but the current document extraction workflow does not call any AI services.
 
 ## Development Notes
 
-- Keep the initial dependency set intentionally small.
+- Keep dependencies focused on the active Streamlit workflow.
 - Add application logic under `services/`, reusable data models under `models/`, and shared helpers under `utils/` as the project grows.
 - Place prompt templates in `prompts/` and product reference materials in `knowledge_base/` when those features are introduced.
 
 ## Roadmap
 
-Future iterations may add:
+Planned iterations include:
 
-- Document ingestion and analysis workflows.
+- AI analysis of extracted document text, including summarization and insight generation.
+- Structured product requirements review workflows.
 - RAG over project knowledge bases.
-- Product strategy and requirements evaluation agents.
+- Product strategy and competitive analysis agents.
 - Exportable analysis outputs.
