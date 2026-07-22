@@ -8,6 +8,7 @@ import streamlit as st
 
 
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt"}
+DOCUMENT_SEPARATOR = "\n\n--- Document: {file_name} ---\n\n"
 
 
 def get_file_extension(file_name: str) -> str:
@@ -54,25 +55,55 @@ def calculate_word_count(text: str) -> int:
     return len(text.split())
 
 
-def display_document_metadata(
-    file_name: str,
-    file_type: str,
-    file_size_kb: float,
-    page_count: int | str,
-    word_count: int,
-) -> None:
-    """Display uploaded document metadata in Streamlit."""
+def build_document_context(document_metadata: list[dict[str, object]]) -> str:
+    """Build a combined product context from uploaded documents in upload order."""
+    context_sections = []
+
+    for document in document_metadata:
+        if document["Status"] != "Extracted":
+            continue
+
+        separator = DOCUMENT_SEPARATOR.format(file_name=document["File Name"])
+        extracted_text = str(document["Extracted Text"])
+        context_sections.append(
+            f"{separator}{extracted_text or 'No readable text was found in this document.'}"
+        )
+
+    return "".join(context_sections).strip()
+
+
+def display_summary_statistics(document_metadata: list[dict[str, object]]) -> None:
+    """Display summary statistics for all uploaded documents."""
+    total_pages = sum(
+        page_count
+        for page_count in (document["Pages"] for document in document_metadata)
+        if isinstance(page_count, int)
+    )
+    total_words = sum(int(document["Word Count"]) for document in document_metadata)
+
+    st.subheader("Summary Statistics")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Documents", len(document_metadata))
+    col2.metric("Total Pages", total_pages)
+    col3.metric("Total Words", total_words)
+
+
+def display_document_metadata(document_metadata: list[dict[str, object]]) -> None:
+    """Display uploaded document metadata in a Streamlit table."""
     st.subheader("Document Metadata")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric("File Name", file_name)
-        st.metric("File Type", file_type.upper())
-        st.metric("File Size", f"{file_size_kb:.2f} KB")
-
-    with col2:
-        st.metric("Number of Pages", page_count)
-        st.metric("Word Count", word_count)
+    st.table(
+        [
+            {
+                "File Name": document["File Name"],
+                "Type": document["Type"],
+                "Size": document["Size"],
+                "Pages": document["Pages"],
+                "Word Count": document["Word Count"],
+                "Status": document["Status"],
+            }
+            for document in document_metadata
+        ]
+    )
 
 
 st.set_page_config(
@@ -83,50 +114,79 @@ st.set_page_config(
 
 st.title("Catalyst AI")
 st.subheader("AI Product Analysis Assistant")
-st.write("Version 1.1 - Document Upload & Text Extraction")
+st.write("Version 1.1 - Multi-Document Upload & Text Extraction")
 
-st.header("Upload a Business Document")
-st.write("Upload a PDF, DOCX, or TXT file to extract its text and review document metadata.")
+st.header("Upload Business Documents")
+st.write("Upload one or more PDF, DOCX, or TXT files to extract text and review document metadata.")
 
-uploaded_file = st.file_uploader(
-    "Choose a supported document",
+uploaded_files = st.file_uploader(
+    "Choose supported documents",
     type=sorted(SUPPORTED_FILE_TYPES),
+    accept_multiple_files=True,
     help="Supported formats: PDF, DOCX, and TXT.",
 )
 
-if uploaded_file is not None:
-    file_type = get_file_extension(uploaded_file.name)
+if uploaded_files:
+    document_metadata = []
 
-    if file_type not in SUPPORTED_FILE_TYPES:
-        st.error("That file type is not supported yet. Please upload a PDF, DOCX, or TXT file.")
-    else:
+    for uploaded_file in uploaded_files:
+        file_type = get_file_extension(uploaded_file.name)
+        file_size_kb = uploaded_file.size / 1024
+        document = {
+            "File Name": uploaded_file.name,
+            "Type": file_type.upper() if file_type else "Unknown",
+            "Size": f"{file_size_kb:.2f} KB",
+            "Pages": "N/A",
+            "Word Count": 0,
+            "Status": "Pending",
+            "Extracted Text": "",
+        }
+
+        if file_type not in SUPPORTED_FILE_TYPES:
+            document["Status"] = "Unsupported file type"
+            document_metadata.append(document)
+            st.error(
+                f"{uploaded_file.name}: That file type is not supported yet. "
+                "Please upload a PDF, DOCX, or TXT file."
+            )
+            continue
+
         try:
             extracted_text, page_count = extract_text(uploaded_file, file_type)
-            word_count = calculate_word_count(extracted_text)
-            file_size_kb = uploaded_file.size / 1024
-
-            st.success("Document uploaded and text extracted successfully.")
-            display_document_metadata(
-                uploaded_file.name,
-                file_type,
-                file_size_kb,
-                page_count,
-                word_count,
-            )
-
-            st.subheader("Extracted Text")
-            st.text_area(
-                "Review extracted text",
-                value=extracted_text or "No readable text was found in this document.",
-                height=350,
-                label_visibility="collapsed",
-            )
+            document["Pages"] = page_count
+            document["Word Count"] = calculate_word_count(extracted_text)
+            document["Status"] = "Extracted"
+            document["Extracted Text"] = extracted_text
+            document_metadata.append(document)
         except Exception as exc:
+            document["Status"] = "Extraction failed"
+            document_metadata.append(document)
             st.error(
-                "We could not extract text from this file. Please check that the document is not "
-                "password-protected or corrupted, then try again."
+                f"{uploaded_file.name}: We could not extract text from this file. Please check that "
+                "the document is not password-protected or corrupted, then try again."
             )
             st.caption(f"Technical details: {exc}")
+
+    successful_documents = [
+        document for document in document_metadata if document["Status"] == "Extracted"
+    ]
+
+    if successful_documents:
+        st.success(f"Extracted text from {len(successful_documents)} document(s).")
+
+    display_document_metadata(document_metadata)
+    display_summary_statistics(document_metadata)
+
+    combined_product_context = build_document_context(document_metadata)
+
+    if combined_product_context:
+        st.subheader("Combined Product Context")
+        st.text_area(
+            "Review combined product context",
+            value=combined_product_context,
+            height=350,
+            label_visibility="collapsed",
+        )
 
 st.divider()
 st.header("Ready for AI Analysis (Coming in the next release)")
