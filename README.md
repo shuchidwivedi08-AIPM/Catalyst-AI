@@ -4,14 +4,16 @@ Catalyst AI is an AI Product Analysis Assistant designed to help product teams e
 
 ## Vision
 
-The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports document upload and text extraction as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
+The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports multi-document upload and text extraction as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
 
 ## Current Features
 
 - A Streamlit landing page for Catalyst AI.
-- Document Upload & Text Extraction for PDF, DOCX, and TXT files.
-- Document metadata display, including file name, file type, file size, PDF page count, and word count.
-- Scrollable extracted-text preview for uploaded business documents.
+- Multi-document Upload & Text Extraction for PDF, DOCX, and TXT files.
+- Per-document metadata table, including file name, file type, file size, page count, word count, and extraction status.
+- Combined in-memory product context that concatenates extracted text in upload order with clear document separators.
+- Summary statistics for total documents, total pages, and total words.
+- Scrollable combined-text preview for uploaded business documents.
 - A Python project structure for agents, services, prompts, data, models, utilities, and documentation.
 - Example environment configuration.
 
