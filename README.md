@@ -43,7 +43,10 @@ Catalyst-AI/
 │       ├── __init__.py
 │       ├── openai_client.py
 │       ├── product_understanding_service.py
-│       ├── prompts.py
+│       ├── prompts/
+│       │   ├── __init__.py
+│       │   ├── discovery_prompt.py
+│       │   └── product_understanding_prompt.py
 │       ├── response_parser.py
 │       └── schemas.py
 ├── requirements.txt
@@ -118,7 +121,7 @@ The `.env.example` file documents expected local configuration values. Configure
 
 - Keep dependencies focused on the active Streamlit workflow.
 - Add application logic under `services/`, reusable data models under `models/`, and shared helpers under `utils/` as the project grows.
-- Place prompt templates in `prompts/` and product reference materials in `knowledge_base/` when those features are introduced.
+- Place packaged AI prompt templates under `catalyst_ai/ai/prompts/`; keep product reference materials in `knowledge_base/` when those features are introduced.
 
 ## Roadmap
 
