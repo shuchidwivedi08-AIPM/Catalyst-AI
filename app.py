@@ -8,9 +8,10 @@ from docx import Document
 from pypdf import PdfReader
 import streamlit as st
 
+from catalyst_ai.ai.capabilities.discovery_engine import run_discovery
 from catalyst_ai.ai.openai_client import OpenAIConfigurationError
 from catalyst_ai.ai.product_understanding_service import generate_product_understanding
-from catalyst_ai.ai.response_parser import ProductUnderstandingParseError
+from catalyst_ai.ai.response_parser import DiscoveryParseError, ProductUnderstandingParseError
 
 
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt"}
@@ -194,6 +195,61 @@ def display_stakeholder_perspective() -> str:
     return selected_stakeholder
 
 
+def display_discovery_findings(title: str, findings) -> None:
+    """Display a Discovery Engine findings category as clean cards."""
+    with st.expander(title, expanded=False):
+        if not findings:
+            st.write("No findings identified.")
+            return
+
+        for finding in findings:
+            with st.container(border=True):
+                st.markdown(f"**{finding.id}: {finding.title}**")
+                st.caption(f"Severity: {finding.severity}")
+                st.write(finding.description or "No description provided.")
+                if finding.source_documents:
+                    st.caption("Source documents: " + ", ".join(finding.source_documents))
+
+
+def display_discovery_result(discovery_result) -> None:
+    """Display structured AI Discovery Engine output in the Streamlit UI."""
+    summary = discovery_result.summary
+    col1, col2 = st.columns(2)
+    col3, col4 = st.columns(2)
+    col1.metric("Conflicts", summary.conflicts)
+    col2.metric("Missing Information", summary.missing_information)
+    col3.metric("Assumptions", summary.assumptions)
+    col4.metric("Recommendations", summary.recommendations)
+
+    display_discovery_findings("Conflicts", discovery_result.conflicts)
+    display_discovery_findings("Missing Information", discovery_result.missing_information)
+    display_discovery_findings("Assumptions", discovery_result.assumptions)
+    display_discovery_findings("Recommendations", discovery_result.recommendations)
+
+
+def display_ai_discovery_engine(product_context: dict[str, Any]) -> None:
+    """Display controls and results for the independent AI Discovery Engine."""
+    st.header("🔍 AI Discovery Engine")
+    st.write("Analyze the uploaded Product Context before generating Product Understanding.")
+
+    if st.button("Run Discovery"):
+        try:
+            with st.spinner("Analyzing Product Context..."):
+                discovery_result = run_discovery(product_context)
+            st.success("AI Discovery completed.")
+            display_discovery_result(discovery_result)
+        except (OpenAIConfigurationError, DiscoveryParseError, ValueError):
+            st.error(
+                "Unable to complete Discovery.\n\n"
+                "Please check API configuration and try again."
+            )
+        except Exception:
+            st.error(
+                "Unable to complete Discovery.\n\n"
+                "Please check API configuration and try again."
+            )
+
+
 def display_product_understanding(product_understanding) -> None:
     """Display structured AI Product Understanding in the Streamlit UI."""
     st.subheader("Executive Summary")
@@ -355,6 +411,9 @@ if uploaded_files:
             height=350,
             label_visibility="collapsed",
         )
+
+        st.divider()
+        display_ai_discovery_engine(product_context)
 
         st.divider()
         selected_stakeholder = display_stakeholder_perspective()
