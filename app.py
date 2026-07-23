@@ -8,6 +8,10 @@ from docx import Document
 from pypdf import PdfReader
 import streamlit as st
 
+from catalyst_ai.ai.openai_client import OpenAIConfigurationError
+from catalyst_ai.ai.product_understanding_service import generate_product_understanding
+from catalyst_ai.ai.response_parser import ProductUnderstandingParseError
+
 
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt"}
 DOCUMENT_SEPARATOR = "\n\n--- Document: {file_name} ---\n\n"
@@ -190,13 +194,54 @@ def display_stakeholder_perspective() -> str:
     return selected_stakeholder
 
 
-def display_ai_analysis_placeholder(selected_stakeholder: str) -> None:
-    """Display a visual placeholder for future stakeholder-specific AI analysis."""
-    st.header("🤖 AI Analysis")
-    st.info(
-        f"Selected Stakeholder:\n{selected_stakeholder}\n\n"
-        "Status:\n🚧 Coming in the next iteration"
-    )
+def display_product_understanding(product_understanding) -> None:
+    """Display structured AI Product Understanding in the Streamlit UI."""
+    st.subheader("Executive Summary")
+    st.write(product_understanding.executive_summary or "No executive summary provided.")
+
+    st.subheader("Business Problem")
+    st.write(product_understanding.business_problem or "No business problem provided.")
+
+    sections = {
+        "Business Goals": product_understanding.business_goals,
+        "Functional Requirements": product_understanding.functional_requirements,
+        "Non-functional Requirements": product_understanding.non_functional_requirements,
+        "Risks": product_understanding.risks,
+        "Assumptions": product_understanding.assumptions,
+        "Open Questions": product_understanding.open_questions,
+        "Recommendations": product_understanding.recommendations,
+    }
+
+    for title, items in sections.items():
+        st.subheader(title)
+        if items:
+            for item in items:
+                st.markdown(f"- {item}")
+        else:
+            st.write("No items identified in the provided Product Context.")
+
+
+def display_ai_product_understanding(product_context: dict[str, Any], selected_stakeholder: str) -> None:
+    """Display controls and results for stakeholder-specific AI Product Understanding."""
+    st.header("🤖 AI Product Understanding")
+    st.write(f"Selected Stakeholder: **{selected_stakeholder}**")
+
+    if st.button("Analyze Product Context", type="primary"):
+        try:
+            with st.spinner("Analyzing Product Context..."):
+                product_understanding = generate_product_understanding(
+                    product_context,
+                    selected_stakeholder,
+                )
+            st.success("AI Product Understanding generated.")
+            display_product_understanding(product_understanding)
+        except OpenAIConfigurationError as exc:
+            st.error(str(exc))
+        except (ProductUnderstandingParseError, ValueError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error("AI Product Understanding failed. Please retry or check configuration.")
+            st.caption(f"Technical details: {exc}")
 
 
 def display_document_metadata(document_metadata: list[dict[str, Any]]) -> None:
@@ -226,7 +271,7 @@ st.set_page_config(
 
 st.title("Catalyst AI")
 st.subheader("AI Product Analysis Assistant")
-st.write("Version 1.2 - Document Pre-processing")
+st.write("Version 1.3 - AI Product Understanding")
 
 st.header("Upload Business Documents")
 st.write(
@@ -315,6 +360,6 @@ if uploaded_files:
         selected_stakeholder = display_stakeholder_perspective()
 
         st.divider()
-        display_ai_analysis_placeholder(selected_stakeholder)
+        display_ai_product_understanding(product_context, selected_stakeholder)
 else:
     display_processing_pipeline(product_context)
