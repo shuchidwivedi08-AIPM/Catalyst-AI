@@ -156,6 +156,49 @@ def display_summary_statistics(overall_statistics: dict[str, int]) -> None:
         col4.metric("Total Characters", overall_statistics["Total Characters"])
 
 
+def display_stakeholder_perspective() -> str:
+    """Display stakeholder perspective selection and return the selected stakeholder."""
+    st.header("👤 Stakeholder Perspective")
+    st.write("Select the stakeholder perspective for future AI analysis.")
+
+    selected_stakeholder = st.radio(
+        "Stakeholder",
+        ["Product Owner", "Technical Lead"],
+        index=0,
+    )
+
+    stakeholder_focus = {
+        "Product Owner": [
+            "Business Goals",
+            "Functional Requirements",
+            "Risks",
+            "Assumptions",
+            "Open Questions",
+        ],
+        "Technical Lead": [
+            "Technical Dependencies",
+            "APIs & Integrations",
+            "Non-functional Requirements",
+            "Technical Risks",
+            "Technical Constraints",
+        ],
+    }
+
+    focus_items = "\n".join(f"• {item}" for item in stakeholder_focus[selected_stakeholder])
+    st.info(f"👤 {selected_stakeholder}\n\nPrimary Focus\n\n{focus_items}")
+
+    return selected_stakeholder
+
+
+def display_ai_analysis_placeholder(selected_stakeholder: str) -> None:
+    """Display a visual placeholder for future stakeholder-specific AI analysis."""
+    st.header("🤖 AI Analysis")
+    st.info(
+        f"Selected Stakeholder:\n{selected_stakeholder}\n\n"
+        "Status:\n🚧 Coming in the next iteration"
+    )
+
+
 def display_document_metadata(document_metadata: list[dict[str, Any]]) -> None:
     """Display uploaded document metadata in a Streamlit table."""
     st.subheader("Document Metadata")
@@ -267,13 +310,11 @@ if uploaded_files:
             height=350,
             label_visibility="collapsed",
         )
+
+        st.divider()
+        selected_stakeholder = display_stakeholder_perspective()
+
+        st.divider()
+        display_ai_analysis_placeholder(selected_stakeholder)
 else:
     display_processing_pipeline(product_context)
-
-st.divider()
-st.header("Ready for AI Analysis (Coming in the next release)")
-st.write(
-    "Document preprocessing is now available. Extracted text is cleaned and assembled into "
-    "a local Product Context object. AI-powered summarization, requirements review, and "
-    "product analysis workflows are planned for a future release."
-)
