@@ -4,7 +4,7 @@ Catalyst AI is an AI Product Analysis Assistant designed to help product teams e
 
 ## Vision
 
-The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application now supports multi-document upload, text extraction, and local document preprocessing as the first functional workflow before retrieval-augmented generation (RAG) and AI analysis are introduced.
+The long-term vision for Catalyst AI is to provide a focused workspace for product analysis workflows, including research synthesis, requirements review, competitive analysis, and structured AI-assisted recommendations. The first version established a clean foundation for future capabilities. The current application supports multi-document upload, text extraction, local document preprocessing, and stakeholder-specific AI Product Understanding generated through an isolated OpenAI integration.
 
 ## Current Features
 
@@ -16,6 +16,7 @@ The long-term vision for Catalyst AI is to provide a focused workspace for produ
 - Combined in-memory product context that concatenates cleaned text in upload order with clear document-name separators.
 - Project statistics summary card for total documents, total pages, total words, and total characters.
 - Document Processing Pipeline UI that confirms upload, extraction, cleaning, and Product Context readiness.
+- Stakeholder-specific AI Product Understanding for Product Owner and Technical Lead perspectives.
 - Scrollable combined-text preview for uploaded business documents.
 - A Python project structure for agents, services, prompts, data, models, utilities, and documentation.
 - Example environment configuration.
@@ -30,13 +31,21 @@ After supported files are uploaded and text extraction completes, Catalyst AI ru
 - Calculates overall project statistics: total documents, total pages, total words, and total characters.
 - Builds an internal Product Context object with document metadata, cleaned text by file, combined text, and overall statistics.
 
-All preprocessing runs locally in the Streamlit app. This stage does not call OpenAI or any other AI model.
+Preprocessing runs locally in the Streamlit app. The optional AI Product Understanding step sends only the assembled Product Context through the Product Understanding Service to the OpenAI client and returns validated structured JSON to the UI.
 
 ## Project Structure
 
 ```text
 Catalyst-AI/
 ├── app.py
+├── catalyst_ai/
+│   └── ai/
+│       ├── __init__.py
+│       ├── openai_client.py
+│       ├── product_understanding_service.py
+│       ├── prompts.py
+│       ├── response_parser.py
+│       └── schemas.py
 ├── requirements.txt
 ├── .env.example
 ├── README.md
@@ -103,7 +112,7 @@ Catalyst-AI/
 
 ## Environment Variables
 
-The `.env.example` file documents expected local configuration values. Future AI-enabled features will use `OPENAI_API_KEY`, but the current document extraction and preprocessing workflow does not call any AI services.
+The `.env.example` file documents expected local configuration values. Configure `OPENAI_API_KEY` for AI Product Understanding and optionally set `OPENAI_MODEL`; the default model is `gpt-5.5`.
 
 ## Development Notes
 
@@ -115,7 +124,7 @@ The `.env.example` file documents expected local configuration values. Future AI
 
 Planned iterations include:
 
-- AI analysis of extracted document text, including summarization and insight generation.
+- Additional AI artifacts such as PRDs, user stories, and test cases.
 - Structured product requirements review workflows.
 - RAG over project knowledge bases.
 - Product strategy and competitive analysis agents.
