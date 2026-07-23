@@ -4,11 +4,15 @@ import json
 
 from pydantic import ValidationError
 
-from catalyst_ai.ai.schemas import ProductUnderstanding
+from catalyst_ai.ai.schemas import DiscoveryResult, ProductUnderstanding
 
 
 class ProductUnderstandingParseError(ValueError):
     """Raised when a product-understanding response cannot be parsed."""
+
+
+class DiscoveryParseError(ValueError):
+    """Raised when a Discovery Engine response cannot be parsed."""
 
 
 def parse_product_understanding(raw_response: str) -> ProductUnderstanding:
@@ -32,4 +36,28 @@ def parse_product_understanding(raw_response: str) -> ProductUnderstanding:
     except ValidationError as exc:
         raise ProductUnderstandingParseError(
             "The AI response did not match the expected Product Understanding schema."
+        ) from exc
+
+
+def parse_discovery_result(raw_response: str) -> DiscoveryResult:
+    """Validate raw JSON and return a DiscoveryResult object."""
+    try:
+        payload = json.loads(raw_response)
+    except json.JSONDecodeError as exc:
+        raise DiscoveryParseError(
+            "The AI Discovery response was not valid JSON. Please retry discovery."
+        ) from exc
+
+    try:
+        return DiscoveryResult.model_validate(payload)
+    except AttributeError:
+        try:
+            return DiscoveryResult.parse_obj(payload)
+        except ValidationError as exc:
+            raise DiscoveryParseError(
+                "The AI response did not match the expected Discovery Result schema."
+            ) from exc
+    except ValidationError as exc:
+        raise DiscoveryParseError(
+            "The AI response did not match the expected Discovery Result schema."
         ) from exc
