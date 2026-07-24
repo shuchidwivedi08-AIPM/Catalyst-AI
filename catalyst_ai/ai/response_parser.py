@@ -49,7 +49,7 @@ def _parse_artifact(response_text: str, schema, label: str):
         return schema.model_validate(payload)
     except ValidationError as exc:
         raise ArtifactParseError(
-            f"The AI response did not match the expected {label} schema."
+            f"The AI response did not match the expected {label} schema: {exc}"
         ) from exc
 
 
