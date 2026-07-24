@@ -237,8 +237,8 @@ def get_all_discovery_findings(discovery_result) -> list[tuple[str, object]]:
     return all_findings
 
 
-def display_resolution_summary(discovery_result) -> None:
-    """Display the existing discovery counts and the resolution progress."""
+def display_discovery_category_summary(discovery_result) -> None:
+    """Display the counts for each discovery finding category."""
     summary = discovery_result.summary
     col1, col2 = st.columns(2)
     col3, col4 = st.columns(2)
@@ -247,6 +247,10 @@ def display_resolution_summary(discovery_result) -> None:
     col3.metric("Assumptions", summary.assumptions)
     col4.metric("Recommendations", summary.recommendations)
 
+
+def display_resolution_summary(discovery_result) -> None:
+    """Display the existing resolution counts and progress."""
+    st.subheader("Resolution Summary")
     findings = get_all_discovery_findings(discovery_result)
     resolutions = st.session_state["discovery_resolutions"]
     resolved = sum(
@@ -340,13 +344,14 @@ def display_resolution_controls(title: str, findings, is_recommendation: bool = 
 def display_discovery_result(discovery_result, product_context: dict[str, Any]) -> None:
     """Display persistent findings, their structured controls, and validation action."""
     try:
-        display_resolution_summary(discovery_result)
+        display_discovery_category_summary(discovery_result)
         display_resolution_controls("Conflicts", discovery_result.conflicts)
         display_resolution_controls("Missing Information", discovery_result.missing_information)
         display_resolution_controls("Assumptions", discovery_result.assumptions)
         display_resolution_controls(
             "Recommendations", discovery_result.recommendations, is_recommendation=True
         )
+        display_resolution_summary(discovery_result)
     except ValueError as exc:
         st.error(str(exc))
         return
