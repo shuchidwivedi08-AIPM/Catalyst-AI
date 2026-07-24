@@ -1,5 +1,6 @@
 """Catalyst AI Streamlit application."""
 
+import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -9,9 +10,14 @@ from pypdf import PdfReader
 import streamlit as st
 
 from catalyst_ai.ai.capabilities.discovery_engine import run_discovery
+from catalyst_ai.ai.capabilities.discovery_resolution import (
+    build_validated_product_context,
+    save_resolution,
+)
 from catalyst_ai.ai.openai_client import OpenAIConfigurationError
 from catalyst_ai.ai.product_understanding_service import generate_product_understanding
 from catalyst_ai.ai.response_parser import DiscoveryParseError, ProductUnderstandingParseError
+from catalyst_ai.ai.schemas import ResolutionStatus
 
 
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt"}
@@ -195,8 +201,88 @@ def display_stakeholder_perspective() -> str:
     return selected_stakeholder
 
 
-def display_discovery_findings(title: str, findings) -> None:
-    """Display a Discovery Engine findings category as clean cards."""
+def initialize_session_state() -> None:
+    """Initialize state that must survive Streamlit's widget reruns."""
+    st.session_state.setdefault("discovery_result", None)
+    st.session_state.setdefault("discovery_resolutions", {})
+    st.session_state.setdefault("validated_product_context", None)
+    st.session_state.setdefault("product_context_hash", None)
+
+
+def reset_context_dependent_state() -> None:
+    """Remove findings and decisions that belong to a different Product Context."""
+    st.session_state["discovery_result"] = None
+    st.session_state["discovery_resolutions"] = {}
+    st.session_state["validated_product_context"] = None
+    for key in list(st.session_state):
+        if key.startswith(("status_", "answer_", "save_")):
+            del st.session_state[key]
+
+
+def get_all_discovery_findings(discovery_result) -> list[tuple[str, object]]:
+    """Return all findings with their category, rejecting duplicate IDs."""
+    all_findings = []
+    finding_ids = set()
+    for category, findings in (
+        ("conflicts", discovery_result.conflicts),
+        ("missing_information", discovery_result.missing_information),
+        ("assumptions", discovery_result.assumptions),
+        ("recommendations", discovery_result.recommendations),
+    ):
+        for finding in findings:
+            if not finding.id or finding.id in finding_ids:
+                raise ValueError("Discovery findings must have unique, non-empty IDs.")
+            finding_ids.add(finding.id)
+            all_findings.append((category, finding))
+    return all_findings
+
+
+def display_resolution_summary(discovery_result) -> None:
+    """Display the existing discovery counts and the resolution progress."""
+    summary = discovery_result.summary
+    col1, col2 = st.columns(2)
+    col3, col4 = st.columns(2)
+    col1.metric("Conflicts", summary.conflicts)
+    col2.metric("Missing Information", summary.missing_information)
+    col3.metric("Assumptions", summary.assumptions)
+    col4.metric("Recommendations", summary.recommendations)
+
+    findings = get_all_discovery_findings(discovery_result)
+    resolutions = st.session_state["discovery_resolutions"]
+    resolved = sum(
+        resolution.status == ResolutionStatus.RESOLVED
+        for resolution in resolutions.values()
+    )
+    deferred = sum(
+        resolution.status == ResolutionStatus.DEFERRED
+        for resolution in resolutions.values()
+    )
+    remaining = len(findings) - sum(
+        resolution.status in {
+            ResolutionStatus.RESOLVED,
+            ResolutionStatus.DEFERRED,
+            ResolutionStatus.NOT_APPLICABLE,
+        }
+        for resolution in resolutions.values()
+    )
+    metrics = st.columns(3)
+    metrics[0].metric("Resolved", resolved)
+    metrics[1].metric("Remaining", max(remaining, 0))
+    metrics[2].metric("Deferred", deferred)
+    st.progress(resolved / len(findings) if findings else 0.0)
+
+
+def _status_indicator(status: ResolutionStatus) -> str:
+    return {
+        ResolutionStatus.RESOLVED: "✅ Resolved",
+        ResolutionStatus.DEFERRED: "⏸ Deferred",
+        ResolutionStatus.NOT_APPLICABLE: "➖ Not Applicable",
+        ResolutionStatus.UNRESOLVED: "⚠ Unresolved",
+    }[status]
+
+
+def display_resolution_controls(title: str, findings, is_recommendation: bool = False) -> None:
+    """Render structured controls for one category of persisted findings."""
     with st.expander(title, expanded=False):
         if not findings:
             st.write("No findings identified.")
@@ -209,22 +295,93 @@ def display_discovery_findings(title: str, findings) -> None:
                 st.write(finding.description or "No description provided.")
                 if finding.source_documents:
                     st.caption("Source documents: " + ", ".join(finding.source_documents))
+                saved = st.session_state["discovery_resolutions"].get(finding.id)
+                current_status = saved.status if saved else ResolutionStatus.UNRESOLVED
+                st.caption(_status_indicator(current_status))
+
+                if is_recommendation:
+                    choices = ["Pending", "Accepted", "Dismissed"]
+                    mapping = {
+                        "Pending": ResolutionStatus.UNRESOLVED,
+                        "Accepted": ResolutionStatus.RESOLVED,
+                        "Dismissed": ResolutionStatus.NOT_APPLICABLE,
+                    }
+                    reverse_mapping = {value: key for key, value in mapping.items()}
+                    selected = st.selectbox(
+                        "Decision",
+                        choices,
+                        index=choices.index(reverse_mapping.get(current_status, "Pending")),
+                        key=f"status_{finding.id}",
+                    )
+                    selected_status = mapping[selected]
+                else:
+                    statuses = list(ResolutionStatus)
+                    selected_status = st.selectbox(
+                        "Status",
+                        statuses,
+                        index=statuses.index(current_status),
+                        format_func=lambda status: status.value,
+                        key=f"status_{finding.id}",
+                    )
+                answer = st.text_area(
+                    "Your clarification" if not is_recommendation else "Optional note",
+                    value=saved.user_answer if saved else "",
+                    key=f"answer_{finding.id}",
+                )
+                if st.button("Save Resolution", key=f"save_{finding.id}"):
+                    try:
+                        resolution = save_resolution(finding, selected_status, answer)
+                        st.session_state["discovery_resolutions"][finding.id] = resolution
+                        st.success("Resolution saved.")
+                    except ValueError as exc:
+                        st.error(str(exc))
 
 
-def display_discovery_result(discovery_result) -> None:
-    """Display structured AI Discovery Engine output in the Streamlit UI."""
-    summary = discovery_result.summary
-    col1, col2 = st.columns(2)
-    col3, col4 = st.columns(2)
-    col1.metric("Conflicts", summary.conflicts)
-    col2.metric("Missing Information", summary.missing_information)
-    col3.metric("Assumptions", summary.assumptions)
-    col4.metric("Recommendations", summary.recommendations)
+def display_discovery_result(discovery_result, product_context: dict[str, Any]) -> None:
+    """Display persistent findings, their structured controls, and validation action."""
+    try:
+        display_resolution_summary(discovery_result)
+        display_resolution_controls("Conflicts", discovery_result.conflicts)
+        display_resolution_controls("Missing Information", discovery_result.missing_information)
+        display_resolution_controls("Assumptions", discovery_result.assumptions)
+        display_resolution_controls(
+            "Recommendations", discovery_result.recommendations, is_recommendation=True
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return
 
-    display_discovery_findings("Conflicts", discovery_result.conflicts)
-    display_discovery_findings("Missing Information", discovery_result.missing_information)
-    display_discovery_findings("Assumptions", discovery_result.assumptions)
-    display_discovery_findings("Recommendations", discovery_result.recommendations)
+    st.subheader("Build Validated Product Context")
+    if st.button("Create Validated Context"):
+        try:
+            validated = build_validated_product_context(
+                product_context["combined_text"],
+                discovery_result,
+                st.session_state["discovery_resolutions"],
+            )
+            st.session_state["validated_product_context"] = validated
+            unresolved = len(get_all_discovery_findings(discovery_result)) - len(
+                validated.resolved_clarifications
+            )
+            st.success("Validated Product Context created.")
+            if unresolved:
+                st.warning(f"Validated Context created with {unresolved} unresolved findings.")
+        except ValueError as exc:
+            st.error(str(exc))
+
+    display_validated_context()
+
+
+def display_validated_context() -> None:
+    """Show the generated context without allowing edits to its source content."""
+    validated = st.session_state["validated_product_context"]
+    if validated:
+        st.text_area(
+            "Validated Product Context",
+            value=validated.validated_context,
+            height=350,
+            disabled=True,
+        )
 
 
 def display_ai_discovery_engine(product_context: dict[str, Any]) -> None:
@@ -236,8 +393,9 @@ def display_ai_discovery_engine(product_context: dict[str, Any]) -> None:
         try:
             with st.spinner("Analyzing Product Context..."):
                 discovery_result = run_discovery(product_context)
+            reset_context_dependent_state()
+            st.session_state["discovery_result"] = discovery_result
             st.success("AI Discovery completed.")
-            display_discovery_result(discovery_result)
         except (OpenAIConfigurationError, DiscoveryParseError, ValueError):
             st.error(
                 "Unable to complete Discovery.\n\n"
@@ -248,6 +406,10 @@ def display_ai_discovery_engine(product_context: dict[str, Any]) -> None:
                 "Unable to complete Discovery.\n\n"
                 "Please check API configuration and try again."
             )
+
+    discovery_result = st.session_state["discovery_result"]
+    if discovery_result:
+        display_discovery_result(discovery_result, product_context)
 
 
 def display_product_understanding(product_understanding) -> None:
@@ -282,11 +444,24 @@ def display_ai_product_understanding(product_context: dict[str, Any], selected_s
     st.header("🤖 AI Product Understanding")
     st.write(f"Selected Stakeholder: **{selected_stakeholder}**")
 
+    validated = st.session_state["validated_product_context"]
+    context_options = ["Original Product Context"]
+    if validated:
+        context_options.append("Validated Product Context")
+    selected_context = st.radio(
+        "Context used for AI Product Understanding",
+        context_options,
+        index=0,
+    )
+    apu_context = product_context
+    if selected_context == "Validated Product Context":
+        apu_context = {**product_context, "combined_text": validated.validated_context}
+
     if st.button("Analyze Product Context", type="primary"):
         try:
             with st.spinner("Analyzing Product Context..."):
                 product_understanding = generate_product_understanding(
-                    product_context,
+                    apu_context,
                     selected_stakeholder,
                 )
             st.success("AI Product Understanding generated.")
@@ -324,6 +499,8 @@ st.set_page_config(
     page_icon="🚀",
     layout="centered",
 )
+
+initialize_session_state()
 
 st.title("Catalyst AI")
 st.subheader("AI Product Analysis Assistant")
@@ -396,6 +573,12 @@ if uploaded_files:
 
     if successful_documents:
         product_context = build_product_context(document_metadata)
+        context_hash = hashlib.sha256(
+            product_context["combined_text"].encode("utf-8")
+        ).hexdigest()
+        if st.session_state["product_context_hash"] != context_hash:
+            reset_context_dependent_state()
+            st.session_state["product_context_hash"] = context_hash
         st.success(f"Processed {len(successful_documents)} document(s) locally.")
 
     display_processing_pipeline(product_context)
@@ -421,4 +604,7 @@ if uploaded_files:
         st.divider()
         display_ai_product_understanding(product_context, selected_stakeholder)
 else:
+    if st.session_state["product_context_hash"] is not None:
+        reset_context_dependent_state()
+        st.session_state["product_context_hash"] = None
     display_processing_pipeline(product_context)
