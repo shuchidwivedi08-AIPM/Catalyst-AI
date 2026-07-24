@@ -1,5 +1,7 @@
 """Schemas for AI-generated product understanding artifacts."""
 
+from enum import Enum
+
 from pydantic import BaseModel, Field
 
 
@@ -26,6 +28,25 @@ class DiscoverySummary(BaseModel):
     recommendations: int = 0
 
 
+class ResolutionStatus(str, Enum):
+    """The lifecycle status assigned to an individual discovery finding."""
+
+    UNRESOLVED = "Unresolved"
+    RESOLVED = "Resolved"
+    DEFERRED = "Deferred"
+    NOT_APPLICABLE = "Not Applicable"
+
+
+class DiscoveryResolution(BaseModel):
+    """A user's structured decision or clarification for a discovery finding."""
+
+    finding_id: str
+    status: ResolutionStatus = ResolutionStatus.UNRESOLVED
+    user_answer: str = ""
+    normalized_answer: str = ""
+    resolution_note: str = ""
+
+
 class DiscoveryFinding(BaseModel):
     """A single Discovery Engine finding."""
 
@@ -40,6 +61,7 @@ class DiscoveryFinding(BaseModel):
         default_factory=list,
         description="Optional source document names supporting the finding.",
     )
+    resolution: DiscoveryResolution | None = None
 
 
 class DiscoveryResult(BaseModel):
@@ -50,3 +72,12 @@ class DiscoveryResult(BaseModel):
     missing_information: list[DiscoveryFinding] = Field(default_factory=list)
     assumptions: list[DiscoveryFinding] = Field(default_factory=list)
     recommendations: list[DiscoveryFinding] = Field(default_factory=list)
+
+
+class ValidatedProductContext(BaseModel):
+    """Product Context plus an immutable appendix of explicit user decisions."""
+
+    original_context: str
+    discovery_result: DiscoveryResult
+    resolved_clarifications: list[DiscoveryResolution]
+    validated_context: str
