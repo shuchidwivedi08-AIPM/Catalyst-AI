@@ -4,6 +4,7 @@ from io import BytesIO
 import pytest
 from pydantic import ValidationError
 from catalyst_ai.ai.artifact_state import build_product_understanding_source_hash, is_product_understanding_stale
+from catalyst_ai.ai.capabilities.artifact_generation import generate_artifact
 from catalyst_ai.ai.response_parser import ArtifactParseError, parse_prd_response, parse_technical_specification_response, parse_user_stories_response
 from catalyst_ai.ai.schemas import ArtifactMetadata, ArtifactType, GeneratedArtifact, ProductRequirementsDocument, ProductUnderstanding, TechnicalSpecification, UserStory, UserStoryArtifact
 from catalyst_ai.ai.prompts.prd_prompt import build_prd_prompt
@@ -49,3 +50,25 @@ def test_hash_staleness_detects_upstream_changes():
     assert not is_product_understanding_stale(current, "context", "Product Owner", "Original Product Context")
     assert is_product_understanding_stale(current, "context", "Technical Lead", "Original Product Context")
     assert is_product_understanding_stale(current, "changed", "Product Owner", "Original Product Context")
+
+
+def test_generation_exposes_raw_response_before_parsing(monkeypatch):
+    raw_response = json.dumps(prd().model_dump())
+    events = []
+    monkeypatch.setattr(
+        "catalyst_ai.ai.capabilities.artifact_generation.call_gpt",
+        lambda prompt: raw_response,
+    )
+
+    artifact = generate_artifact(
+        understanding(),
+        ArtifactType.PRD,
+        "Product Owner",
+        "Validated Product Context",
+        "source-hash",
+        lambda response: events.append(("response", response)),
+        lambda: events.append(("parse", None)),
+    )
+
+    assert artifact.content.title == "PRD"
+    assert events == [("response", raw_response), ("parse", None)]

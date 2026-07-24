@@ -3,6 +3,7 @@
 import hashlib
 from pathlib import Path
 import re
+import traceback
 from typing import Any
 
 from docx import Document
@@ -536,6 +537,11 @@ def display_generated_artifact(artifact) -> None:
 
 def display_ai_artifact_generation(source_text: str, current_context_source: str, current_stakeholder: str) -> None:
     st.header("📄 AI Artifact Generation")
+    debug_mode = st.checkbox(
+        "Debug Mode",
+        value=False,
+        help="Shows the raw OpenAI response and parser errors.",
+    )
     understanding = st.session_state["product_understanding"]
     if not understanding:
         st.info("Generate AI Product Understanding before creating an artifact."); st.selectbox("Artifact Type", list(ArtifactType), format_func=lambda item: item.value, disabled=True); return
@@ -547,14 +553,57 @@ def display_ai_artifact_generation(source_text: str, current_context_source: str
     if stale: st.warning("The current AI Product Understanding is outdated. Regenerate it before generating an artifact.")
     artifact_type = st.selectbox("Artifact Type", list(ArtifactType), format_func=lambda item: item.value)
     if st.button("Generate Artifact", disabled=stale):
+        raw_response = None
+
+        def display_raw_response(response: str) -> None:
+            nonlocal raw_response
+            raw_response = response
+            if debug_mode:
+                print("=" * 80)
+                print("RAW OPENAI RESPONSE")
+                print("=" * 80)
+                print(raw_response)
+                print("=" * 80)
+                st.success("OpenAI response received.")
+                st.subheader("Raw OpenAI Response")
+                st.text_area("Model Output", value=raw_response, height=500)
+
+        def display_parser_exception(exc: Exception) -> None:
+            print("=" * 80)
+            print("PARSER EXCEPTION")
+            print("=" * 80)
+            traceback.print_exc()
+            st.error("Artifact generation failed.")
+            st.subheader("Exception")
+            st.exception(exc)
+            st.code(traceback.format_exc())
+
         try:
+            if debug_mode: st.info("Calling OpenAI...")
             with st.spinner(f"Generating {artifact_type.value}..."):
-                artifact = generate_artifact(understanding, artifact_type, stored_stakeholder, stored_context, st.session_state["product_understanding_source_hash"])
+                artifact = generate_artifact(
+                    understanding,
+                    artifact_type,
+                    stored_stakeholder,
+                    stored_context,
+                    st.session_state["product_understanding_source_hash"],
+                    display_raw_response,
+                    lambda: st.info("Parsing artifact...") if debug_mode else None,
+                )
             st.session_state["generated_artifact"] = artifact; st.session_state["generated_artifact_type"] = artifact_type; st.session_state["generated_artifact_metadata"] = artifact.metadata
+            if debug_mode: st.success("Artifact parsed successfully.")
             st.success("Artifact generated.")
-        except ArtifactParseError: st.error("The generated artifact could not be parsed. Please retry.")
+        except ArtifactParseError as exc:
+            if debug_mode:
+                display_parser_exception(exc)
+            else:
+                st.error("The generated artifact could not be parsed. Please retry.")
         except (OpenAIConfigurationError, ValueError) as exc: st.error(str(exc))
-        except Exception: st.error("Artifact generation failed. Please retry.")
+        except Exception as exc:
+            if debug_mode:
+                display_parser_exception(exc)
+            else:
+                st.error("Artifact generation failed. Please retry.")
     artifact = st.session_state["generated_artifact"]
     if artifact and st.session_state["generated_artifact_type"] == artifact_type:
         st.subheader("Artifact Preview"); display_generated_artifact(artifact)
