@@ -502,32 +502,52 @@ def display_ai_product_understanding(product_context: dict[str, Any], selected_s
     return source_text, selected_context
 
 
-def _preview_section(title: str, value: str | list[str]) -> None:
+def display_traceability(values) -> None:
+    if values:
+        st.caption("Traceability: " + "; ".join(f"{item.source_type}: {item.reference}" for item in values))
+
+
+def display_structured_item(item) -> None:
+    data = item.model_dump() if hasattr(item, "model_dump") else {"Details": item}
+    title = data.get("id", "") or next((str(value) for key, value in data.items() if key not in {"traceability"} and isinstance(value, str) and value), "Item")
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        for key, value in data.items():
+            if key in {"id", "traceability"} or value in ("", [], None):
+                continue
+            if isinstance(value, list):
+                st.markdown(f"**{key.replace('_', ' ').title()}**")
+                for nested in value:
+                    if isinstance(nested, dict): st.markdown("- " + "; ".join(f"{k.replace('_',' ').title()}: {v}" for k,v in nested.items() if v))
+                    else: st.markdown(f"- {nested}")
+            else: st.markdown(f"**{key.replace('_', ' ').title()}**: {value}")
+        display_traceability(getattr(item, "traceability", []))
+
+
+def _preview_section(title, value) -> None:
+    if not value: return
     st.subheader(title)
-    if isinstance(value, list):
-        for item in value: st.markdown(f"- {item}")
-        if not value: st.write("None identified.")
-    else: st.write(value or "None identified.")
+    if isinstance(value, str): st.write(value)
+    else:
+        for item in value: display_structured_item(item) if hasattr(item, "model_dump") else st.markdown(f"- {item}")
 
 
 def display_prd_preview(content: ProductRequirementsDocument) -> None:
     st.subheader(content.title)
-    for label, value in (("Executive Summary", content.executive_summary), ("Problem Statement", content.problem_statement), ("Business Objectives", content.business_objectives), ("Target Users", content.target_users), ("Personas", content.personas), ("In Scope", content.in_scope), ("Out of Scope", content.out_of_scope), ("Functional Requirements", content.functional_requirements), ("Non-functional Requirements", content.non_functional_requirements), ("Dependencies", content.dependencies), ("Risks", content.risks), ("Assumptions", content.assumptions), ("Success Metrics", content.success_metrics), ("Open Questions", content.open_questions)): _preview_section(label, value)
+    for name, value in content:
+        if name not in {"title", "document_version"}: _preview_section(name.replace("_", " ").title(), value)
 
 
 def display_user_stories_preview(content: UserStoryArtifact) -> None:
     st.subheader(content.title); _preview_section("Overview", content.overview)
-    for story in content.stories:
-        with st.container(border=True):
-            st.markdown(f"**{story.id} — {story.title}**"); st.write(story.story); st.caption(f"Priority: {story.priority}")
-            _preview_section("Acceptance Criteria", story.acceptance_criteria)
-    for label, value in (("Cross-cutting Requirements", content.cross_cutting_requirements), ("Assumptions", content.assumptions), ("Open Questions", content.open_questions)): _preview_section(label, value)
+    _preview_section("User Stories", content.stories)
+    for name in ("cross_cutting_requirements", "assumptions", "open_questions"): _preview_section(name.replace("_", " ").title(), getattr(content,name))
 
 
 def display_technical_specification_preview(content: TechnicalSpecification) -> None:
     st.subheader(content.title)
-    for label, value in (("Solution Overview", content.solution_overview), ("Architecture Summary", content.architecture_summary), ("Architecture Components", content.architecture_components), ("Integrations", content.integrations), ("API Requirements", content.api_requirements), ("Data Requirements", content.data_requirements), ("Security Requirements", content.security_requirements), ("Non-functional Requirements", content.non_functional_requirements), ("Deployment Considerations", content.deployment_considerations), ("Observability Requirements", content.observability_requirements), ("Dependencies", content.dependencies), ("Technical Risks", content.technical_risks), ("Assumptions", content.assumptions), ("Open Decisions", content.open_decisions)): _preview_section(label, value)
-
+    for name, value in content:
+        if name not in {"title", "document_version"}: _preview_section(name.replace("_", " ").title(), value)
 
 def display_generated_artifact(artifact) -> None:
     if isinstance(artifact.content, ProductRequirementsDocument): display_prd_preview(artifact.content)

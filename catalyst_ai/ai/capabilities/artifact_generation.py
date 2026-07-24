@@ -2,6 +2,7 @@
 from collections.abc import Callable
 
 from catalyst_ai.ai.openai_client import call_gpt
+from catalyst_ai.ai.capabilities.artifact_normalization import normalize_generated_artifact
 from catalyst_ai.ai.prompts.prd_prompt import build_prd_prompt
 from catalyst_ai.ai.prompts.user_stories_prompt import build_user_stories_prompt
 from catalyst_ai.ai.prompts.technical_specification_prompt import build_technical_specification_prompt
@@ -39,4 +40,4 @@ def generate_artifact(
     if on_before_parse:
         on_before_parse()
     content = parser(raw_response)
-    return GeneratedArtifact(metadata=ArtifactMetadata(artifact_type=artifact_type, stakeholder=stakeholder, context_source=context_source, product_understanding_source_hash=product_understanding_source_hash), content=content)
+    return normalize_generated_artifact(GeneratedArtifact(metadata=ArtifactMetadata(artifact_type=artifact_type, stakeholder=stakeholder, context_source=context_source, product_understanding_source_hash=product_understanding_source_hash), content=content))

@@ -1,129 +1,97 @@
-"""Schemas for AI-generated product understanding artifacts."""
-
+"""Schemas for AI-generated product understanding and delivery artifacts."""
 from enum import Enum
-
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic import model_validator
-
+from typing import ClassVar
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class ProductUnderstanding(BaseModel):
-    """Structured stakeholder-specific product understanding."""
-
     executive_summary: str = Field(default="", description="Concise product summary.")
     business_problem: str = Field(default="", description="Problem the product addresses.")
-    business_goals: list[str] = Field(default_factory=list)
-    functional_requirements: list[str] = Field(default_factory=list)
-    non_functional_requirements: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
+    business_goals: list[str] = Field(default_factory=list); functional_requirements: list[str] = Field(default_factory=list)
+    non_functional_requirements: list[str] = Field(default_factory=list); risks: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list); open_questions: list[str] = Field(default_factory=list); recommendations: list[str] = Field(default_factory=list)
 
-
-class ArtifactType(str, Enum):
-    """Artifact types supported by the MVP artifact-generation flow."""
-
-    PRD = "Product Requirements Document"
-    USER_STORIES = "User Stories"
-    TECHNICAL_SPECIFICATION = "Technical Specification"
-
-
-class StrictArtifactModel(BaseModel):
-    """Base model that rejects fields outside an artifact's documented schema."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
+class ArtifactType(str, Enum): PRD="Product Requirements Document"; USER_STORIES="User Stories"; TECHNICAL_SPECIFICATION="Technical Specification"
+class StrictArtifactModel(BaseModel): model_config=ConfigDict(extra="forbid")
 class ArtifactMetadata(StrictArtifactModel):
-    """Traceability metadata for an artifact generated from an understanding."""
+    artifact_type: ArtifactType; stakeholder: str; context_source: str; product_understanding_source_hash: str
 
-    artifact_type: ArtifactType
-    stakeholder: str
-    context_source: str
-    product_understanding_source_hash: str
+class TraceabilityReference(StrictArtifactModel):
+    source_type: str = Field(default="Product Understanding", description="Type of source, such as Product Understanding, Requirement, Risk, or Assumption.")
+    reference: str = Field(default="", description="Readable source reference or source path.")
 
+class StructuredArtifactItem(StrictArtifactModel):
+    """Common safe coercion shared by all generated child models."""
+    string_field: ClassVar[str] = "description"
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_string_and_traceability(cls, value):
+        if isinstance(value, str): return {cls.string_field: value}
+        if not isinstance(value, dict): return value
+        value=dict(value); trace=value.get("traceability")
+        if isinstance(trace, str): value["traceability"]=[{"reference": trace}]
+        elif isinstance(trace, list): value["traceability"]=[{"reference": x} if isinstance(x,str) else x for x in trace]
+        return value
+
+class BusinessObjective(StructuredArtifactItem):
+    string_field: ClassVar[str]="objective"; id:str=""; objective:str=""; rationale:str=""; priority:str="Medium"; success_indicator:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class TargetUser(StructuredArtifactItem):
+    string_field: ClassVar[str]="description"; user_group:str=""; description:str=""; needs:list[str]=Field(default_factory=list); pain_points:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
+class Persona(StructuredArtifactItem):
+    string_field: ClassVar[str]="description"; name:str=""; role:str=""; description:str=""; goals:list[str]=Field(default_factory=list); pain_points:list[str]=Field(default_factory=list); behaviors:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ScopeItem(StructuredArtifactItem):
+    string_field: ClassVar[str]="item"; id:str=""; item:str=""; description:str=""; rationale:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class FunctionalRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="description"; id:str=""; name:str=""; description:str=""; priority:str="Medium"; rationale:str=""; acceptance_criteria:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
+class NonFunctionalRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="requirement"; id:str=""; category:str=""; requirement:str=""; measurable_target:str=""; priority:str="Medium"; rationale:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ArtifactDependency(StructuredArtifactItem):
+    string_field: ClassVar[str]="dependency"; id:str=""; dependency:str=""; dependency_type:str=""; impact:str=""; owner:str=""; status:str="Unconfirmed"; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ArtifactRisk(StructuredArtifactItem):
+    string_field: ClassVar[str]="risk"; id:str=""; risk:str=""; impact:str=""; likelihood:str="Medium"; severity:str="Medium"; mitigation:str=""; owner:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ArtifactAssumption(StructuredArtifactItem):
+    string_field: ClassVar[str]="assumption"; id:str=""; assumption:str=""; validation_needed:bool=True; validation_method:str=""; impact_if_false:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class SuccessMetric(StructuredArtifactItem):
+    string_field: ClassVar[str]="metric"; id:str=""; metric:str=""; target:str=""; measurement_method:str=""; reporting_frequency:str=""; owner:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ArtifactOpenQuestion(StructuredArtifactItem):
+    string_field: ClassVar[str]="question"; id:str=""; question:str=""; owner:str=""; priority:str="Medium"; impact:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
 
 class ProductRequirementsDocument(StrictArtifactModel):
-    title: str = ""
-    executive_summary: str = ""
-    problem_statement: str = ""
-    business_objectives: list[str] = Field(default_factory=list)
-    target_users: list[str] = Field(default_factory=list)
-    personas: list[str] = Field(default_factory=list)
-    in_scope: list[str] = Field(default_factory=list)
-    out_of_scope: list[str] = Field(default_factory=list)
-    functional_requirements: list[str] = Field(default_factory=list)
-    non_functional_requirements: list[str] = Field(default_factory=list)
-    dependencies: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    success_metrics: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
+    title:str=""; document_version:str="1.0"; executive_summary:str=""; problem_statement:str=""
+    business_objectives:list[BusinessObjective]=Field(default_factory=list); target_users:list[TargetUser]=Field(default_factory=list); personas:list[Persona]=Field(default_factory=list); in_scope:list[ScopeItem]=Field(default_factory=list); out_of_scope:list[ScopeItem]=Field(default_factory=list); functional_requirements:list[FunctionalRequirement]=Field(default_factory=list); non_functional_requirements:list[NonFunctionalRequirement]=Field(default_factory=list); dependencies:list[ArtifactDependency]=Field(default_factory=list); risks:list[ArtifactRisk]=Field(default_factory=list); assumptions:list[ArtifactAssumption]=Field(default_factory=list); success_metrics:list[SuccessMetric]=Field(default_factory=list); open_questions:list[ArtifactOpenQuestion]=Field(default_factory=list)
 
-
-class UserStory(StrictArtifactModel):
-    id: str = ""
-    title: str = ""
-    persona: str = ""
-    need: str = ""
-    benefit: str = ""
-    story: str = ""
-    acceptance_criteria: list[str] = Field(default_factory=list)
-    priority: str = "Medium"
-    dependencies: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-
+class AcceptanceCriterion(StructuredArtifactItem):
+    string_field: ClassVar[str]="criterion"; id:str=""; scenario:str=""; given:str=""; when:str=""; then:str=""; criterion:str=""
+class UserStory(StructuredArtifactItem):
+    string_field: ClassVar[str]="story"; id:str=""; title:str=""; persona:str=""; need:str=""; benefit:str=""; story:str=""; priority:str="Medium"; status:str="Draft"; acceptance_criteria:list[AcceptanceCriterion]=Field(default_factory=list); dependencies:list[ArtifactDependency]=Field(default_factory=list); risks:list[ArtifactRisk]=Field(default_factory=list); assumptions:list[ArtifactAssumption]=Field(default_factory=list); business_value:str=""; estimation_notes:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
     @model_validator(mode="after")
-    def validate_required_story_fields(self):
-        if not all((self.id.strip(), self.title.strip(), self.persona.strip())):
-            raise ValueError("Each user story requires an ID, title, and persona.")
-        if not any(item.strip() for item in self.acceptance_criteria):
-            raise ValueError("Each user story requires acceptance criteria.")
+    def nonempty_story(self):
+        if not any((self.id.strip(),self.title.strip(),self.persona.strip(),self.story.strip())): raise ValueError("Each user story requires meaningful content.")
         return self
-
-
+class CrossCuttingRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="requirement"; id:str=""; category:str=""; requirement:str=""; affected_story_ids:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
 class UserStoryArtifact(StrictArtifactModel):
-    title: str = ""
-    overview: str = ""
-    stories: list[UserStory] = Field(default_factory=list)
-    cross_cutting_requirements: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
+    title:str=""; overview:str=""; stories:list[UserStory]=Field(default_factory=list); cross_cutting_requirements:list[CrossCuttingRequirement]=Field(default_factory=list); assumptions:list[ArtifactAssumption]=Field(default_factory=list); open_questions:list[ArtifactOpenQuestion]=Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def validate_unique_story_ids(self):
-        ids = [story.id for story in self.stories]
-        if len(ids) != len(set(ids)):
-            raise ValueError("User story IDs must be unique.")
-        return self
-
-
+class ArchitectureComponent(StructuredArtifactItem):
+    string_field: ClassVar[str]="responsibility"; id:str=""; name:str=""; responsibility:str=""; interfaces:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list); technology_assumption:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class IntegrationSpecification(StructuredArtifactItem):
+    string_field: ClassVar[str]="purpose"; id:str=""; system_name:str=""; purpose:str=""; direction:str=""; protocol_or_method:str=""; data_exchanged:list[str]=Field(default_factory=list); authentication:str=""; failure_handling:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ApiRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="purpose"; id:str=""; name:str=""; purpose:str=""; method:str=""; endpoint:str=""; request_summary:str=""; response_summary:str=""; authentication:str=""; error_handling:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
+class DataRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="description"; id:str=""; data_entity:str=""; description:str=""; key_fields:list[str]=Field(default_factory=list); source:str=""; retention:str=""; privacy_classification:str=""; validation_rules:list[str]=Field(default_factory=list); traceability:list[TraceabilityReference]=Field(default_factory=list)
+class SecurityRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="requirement"; id:str=""; category:str=""; requirement:str=""; control:str=""; verification_method:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class DeploymentConsideration(StructuredArtifactItem):
+    string_field: ClassVar[str]="consideration"; id:str=""; area:str=""; consideration:str=""; recommendation:str=""; dependency:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class ObservabilityRequirement(StructuredArtifactItem):
+    string_field: ClassVar[str]="metric_or_event"; id:str=""; category:str=""; signal:str=""; metric_or_event:str=""; alert_condition:str=""; dashboard_requirement:str=""; traceability:list[TraceabilityReference]=Field(default_factory=list)
+class OpenTechnicalDecision(StructuredArtifactItem):
+    string_field: ClassVar[str]="decision"; id:str=""; decision:str=""; options:list[str]=Field(default_factory=list); evaluation_criteria:list[str]=Field(default_factory=list); owner:str=""; priority:str="Medium"; traceability:list[TraceabilityReference]=Field(default_factory=list)
 class TechnicalSpecification(StrictArtifactModel):
-    title: str = ""
-    solution_overview: str = ""
-    architecture_summary: str = ""
-    architecture_components: list[str] = Field(default_factory=list)
-    integrations: list[str] = Field(default_factory=list)
-    api_requirements: list[str] = Field(default_factory=list)
-    data_requirements: list[str] = Field(default_factory=list)
-    security_requirements: list[str] = Field(default_factory=list)
-    non_functional_requirements: list[str] = Field(default_factory=list)
-    deployment_considerations: list[str] = Field(default_factory=list)
-    observability_requirements: list[str] = Field(default_factory=list)
-    dependencies: list[str] = Field(default_factory=list)
-    technical_risks: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    open_decisions: list[str] = Field(default_factory=list)
-
-
-ArtifactContent = ProductRequirementsDocument | UserStoryArtifact | TechnicalSpecification
-
-
-class GeneratedArtifact(StrictArtifactModel):
-    metadata: ArtifactMetadata
-    content: ArtifactContent
-
-
+    title:str=""; document_version:str="1.0"; solution_overview:str=""; architecture_summary:str=""; architecture_components:list[ArchitectureComponent]=Field(default_factory=list); integrations:list[IntegrationSpecification]=Field(default_factory=list); api_requirements:list[ApiRequirement]=Field(default_factory=list); data_requirements:list[DataRequirement]=Field(default_factory=list); security_requirements:list[SecurityRequirement]=Field(default_factory=list); non_functional_requirements:list[NonFunctionalRequirement]=Field(default_factory=list); deployment_considerations:list[DeploymentConsideration]=Field(default_factory=list); observability_requirements:list[ObservabilityRequirement]=Field(default_factory=list); dependencies:list[ArtifactDependency]=Field(default_factory=list); technical_risks:list[ArtifactRisk]=Field(default_factory=list); assumptions:list[ArtifactAssumption]=Field(default_factory=list); open_decisions:list[OpenTechnicalDecision]=Field(default_factory=list)
+ArtifactContent=ProductRequirementsDocument|UserStoryArtifact|TechnicalSpecification
+class GeneratedArtifact(StrictArtifactModel): metadata:ArtifactMetadata; content:ArtifactContent
 class DiscoverySummary(BaseModel):
     """Counts of findings identified by the AI Discovery Engine."""
 
