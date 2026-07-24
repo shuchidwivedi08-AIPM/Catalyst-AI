@@ -9,6 +9,8 @@ from docx import Document
 from pypdf import PdfReader
 import streamlit as st
 
+from catalyst_ai.ai.artifact_state import build_product_understanding_source_hash, is_product_understanding_stale
+from catalyst_ai.ai.capabilities.artifact_generation import generate_artifact
 from catalyst_ai.ai.capabilities.discovery_engine import run_discovery
 from catalyst_ai.ai.capabilities.discovery_resolution import (
     build_validated_product_context,
@@ -16,8 +18,11 @@ from catalyst_ai.ai.capabilities.discovery_resolution import (
 )
 from catalyst_ai.ai.openai_client import OpenAIConfigurationError
 from catalyst_ai.ai.product_understanding_service import generate_product_understanding
-from catalyst_ai.ai.response_parser import DiscoveryParseError, ProductUnderstandingParseError
-from catalyst_ai.ai.schemas import ResolutionStatus
+from catalyst_ai.ai.response_parser import ArtifactParseError, DiscoveryParseError, ProductUnderstandingParseError
+from catalyst_ai.ai.schemas import (
+    ArtifactType, ProductRequirementsDocument, ResolutionStatus, TechnicalSpecification, UserStoryArtifact,
+)
+from catalyst_ai.services.document_export_service import build_artifact_docx
 
 
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt"}
@@ -207,6 +212,23 @@ def initialize_session_state() -> None:
     st.session_state.setdefault("discovery_resolutions", {})
     st.session_state.setdefault("validated_product_context", None)
     st.session_state.setdefault("product_context_hash", None)
+    st.session_state.setdefault("product_understanding", None)
+    st.session_state.setdefault("product_understanding_context_source", None)
+    st.session_state.setdefault("product_understanding_stakeholder", None)
+    st.session_state.setdefault("product_understanding_source_hash", None)
+    st.session_state.setdefault("generated_artifact", None)
+    st.session_state.setdefault("generated_artifact_type", None)
+    st.session_state.setdefault("generated_artifact_metadata", None)
+
+
+def clear_product_understanding_and_artifact() -> None:
+    """Clear state that must never outlive its Product Understanding source."""
+    for key in (
+        "product_understanding", "product_understanding_context_source",
+        "product_understanding_stakeholder", "product_understanding_source_hash",
+        "generated_artifact", "generated_artifact_type", "generated_artifact_metadata",
+    ):
+        st.session_state[key] = None
 
 
 def reset_context_dependent_state() -> None:
@@ -214,6 +236,7 @@ def reset_context_dependent_state() -> None:
     st.session_state["discovery_result"] = None
     st.session_state["discovery_resolutions"] = {}
     st.session_state["validated_product_context"] = None
+    clear_product_understanding_and_artifact()
     for key in list(st.session_state):
         if key.startswith(("status_", "answer_", "save_")):
             del st.session_state[key]
@@ -336,6 +359,8 @@ def display_resolution_controls(title: str, findings, is_recommendation: bool = 
                     try:
                         resolution = save_resolution(finding, selected_status, answer)
                         st.session_state["discovery_resolutions"][finding.id] = resolution
+                        # A changed resolution changes the potential validated source.
+                        clear_product_understanding_and_artifact()
                         st.success("Resolution saved.")
                     except ValueError as exc:
                         st.error(str(exc))
@@ -365,6 +390,7 @@ def display_discovery_result(discovery_result, product_context: dict[str, Any]) 
                 st.session_state["discovery_resolutions"],
             )
             st.session_state["validated_product_context"] = validated
+            clear_product_understanding_and_artifact()
             unresolved = len(get_all_discovery_findings(discovery_result)) - len(
                 validated.resolved_clarifications
             )
@@ -445,40 +471,98 @@ def display_product_understanding(product_understanding) -> None:
 
 
 def display_ai_product_understanding(product_context: dict[str, Any], selected_stakeholder: str) -> None:
-    """Display controls and results for stakeholder-specific AI Product Understanding."""
+    """Generate, persist, and display the stakeholder-specific Product Understanding."""
     st.header("🤖 AI Product Understanding")
-    st.write(f"Selected Stakeholder: **{selected_stakeholder}**")
-
     validated = st.session_state["validated_product_context"]
-    context_options = ["Original Product Context"]
-    if validated:
-        context_options.append("Validated Product Context")
-    selected_context = st.radio(
-        "Context used for AI Product Understanding",
-        context_options,
-        index=0,
-    )
-    apu_context = product_context
-    if selected_context == "Validated Product Context":
-        apu_context = {**product_context, "combined_text": validated.validated_context}
-
+    context_options = ["Original Product Context"] + (["Validated Product Context"] if validated else [])
+    selected_context = st.radio("Context used for AI Product Understanding", context_options, index=0)
+    source_text = validated.validated_context if selected_context == "Validated Product Context" else product_context["combined_text"]
+    apu_context = {**product_context, "combined_text": source_text}
     if st.button("Analyze Product Context", type="primary"):
         try:
             with st.spinner("Analyzing Product Context..."):
-                product_understanding = generate_product_understanding(
-                    apu_context,
-                    selected_stakeholder,
-                )
+                understanding = generate_product_understanding(apu_context, selected_stakeholder)
+            st.session_state["product_understanding"] = understanding
+            st.session_state["product_understanding_context_source"] = selected_context
+            st.session_state["product_understanding_stakeholder"] = selected_stakeholder
+            st.session_state["product_understanding_source_hash"] = build_product_understanding_source_hash(source_text, selected_stakeholder, selected_context)
+            st.session_state["generated_artifact"] = None
+            st.session_state["generated_artifact_type"] = None
+            st.session_state["generated_artifact_metadata"] = None
             st.success("AI Product Understanding generated.")
-            display_product_understanding(product_understanding)
-        except OpenAIConfigurationError as exc:
-            st.error(str(exc))
-        except (ProductUnderstandingParseError, ValueError) as exc:
-            st.error(str(exc))
-        except Exception as exc:
-            st.error("AI Product Understanding failed. Please retry or check configuration.")
-            st.caption(f"Technical details: {exc}")
+        except OpenAIConfigurationError as exc: st.error(str(exc))
+        except (ProductUnderstandingParseError, ValueError) as exc: st.error(str(exc))
+        except Exception: st.error("AI Product Understanding failed. Please retry or check configuration.")
+    stored = st.session_state["product_understanding"]
+    if stored:
+        st.caption(f"Stakeholder Perspective: {st.session_state['product_understanding_stakeholder']}")
+        st.caption(f"Context Source: {st.session_state['product_understanding_context_source']}")
+        display_product_understanding(stored)
+    return source_text, selected_context
 
+
+def _preview_section(title: str, value: str | list[str]) -> None:
+    st.subheader(title)
+    if isinstance(value, list):
+        for item in value: st.markdown(f"- {item}")
+        if not value: st.write("None identified.")
+    else: st.write(value or "None identified.")
+
+
+def display_prd_preview(content: ProductRequirementsDocument) -> None:
+    st.subheader(content.title)
+    for label, value in (("Executive Summary", content.executive_summary), ("Problem Statement", content.problem_statement), ("Business Objectives", content.business_objectives), ("Target Users", content.target_users), ("Personas", content.personas), ("In Scope", content.in_scope), ("Out of Scope", content.out_of_scope), ("Functional Requirements", content.functional_requirements), ("Non-functional Requirements", content.non_functional_requirements), ("Dependencies", content.dependencies), ("Risks", content.risks), ("Assumptions", content.assumptions), ("Success Metrics", content.success_metrics), ("Open Questions", content.open_questions)): _preview_section(label, value)
+
+
+def display_user_stories_preview(content: UserStoryArtifact) -> None:
+    st.subheader(content.title); _preview_section("Overview", content.overview)
+    for story in content.stories:
+        with st.container(border=True):
+            st.markdown(f"**{story.id} — {story.title}**"); st.write(story.story); st.caption(f"Priority: {story.priority}")
+            _preview_section("Acceptance Criteria", story.acceptance_criteria)
+    for label, value in (("Cross-cutting Requirements", content.cross_cutting_requirements), ("Assumptions", content.assumptions), ("Open Questions", content.open_questions)): _preview_section(label, value)
+
+
+def display_technical_specification_preview(content: TechnicalSpecification) -> None:
+    st.subheader(content.title)
+    for label, value in (("Solution Overview", content.solution_overview), ("Architecture Summary", content.architecture_summary), ("Architecture Components", content.architecture_components), ("Integrations", content.integrations), ("API Requirements", content.api_requirements), ("Data Requirements", content.data_requirements), ("Security Requirements", content.security_requirements), ("Non-functional Requirements", content.non_functional_requirements), ("Deployment Considerations", content.deployment_considerations), ("Observability Requirements", content.observability_requirements), ("Dependencies", content.dependencies), ("Technical Risks", content.technical_risks), ("Assumptions", content.assumptions), ("Open Decisions", content.open_decisions)): _preview_section(label, value)
+
+
+def display_generated_artifact(artifact) -> None:
+    if isinstance(artifact.content, ProductRequirementsDocument): display_prd_preview(artifact.content)
+    elif isinstance(artifact.content, UserStoryArtifact): display_user_stories_preview(artifact.content)
+    else: display_technical_specification_preview(artifact.content)
+
+
+def display_ai_artifact_generation(source_text: str, current_context_source: str, current_stakeholder: str) -> None:
+    st.header("📄 AI Artifact Generation")
+    understanding = st.session_state["product_understanding"]
+    if not understanding:
+        st.info("Generate AI Product Understanding before creating an artifact."); st.selectbox("Artifact Type", list(ArtifactType), format_func=lambda item: item.value, disabled=True); return
+    stored_stakeholder = st.session_state["product_understanding_stakeholder"]
+    stored_context = st.session_state["product_understanding_context_source"]
+    st.markdown("**Generation Source**  \nAI Product Understanding")
+    st.caption(f"Stakeholder Perspective: {stored_stakeholder}"); st.caption(f"Context Source: {stored_context}")
+    stale = is_product_understanding_stale(st.session_state["product_understanding_source_hash"], source_text, current_stakeholder, current_context_source)
+    if stale: st.warning("The current AI Product Understanding is outdated. Regenerate it before generating an artifact.")
+    artifact_type = st.selectbox("Artifact Type", list(ArtifactType), format_func=lambda item: item.value)
+    if st.button("Generate Artifact", disabled=stale):
+        try:
+            with st.spinner(f"Generating {artifact_type.value}..."):
+                artifact = generate_artifact(understanding, artifact_type, stored_stakeholder, stored_context, st.session_state["product_understanding_source_hash"])
+            st.session_state["generated_artifact"] = artifact; st.session_state["generated_artifact_type"] = artifact_type; st.session_state["generated_artifact_metadata"] = artifact.metadata
+            st.success("Artifact generated.")
+        except ArtifactParseError: st.error("The generated artifact could not be parsed. Please retry.")
+        except (OpenAIConfigurationError, ValueError) as exc: st.error(str(exc))
+        except Exception: st.error("Artifact generation failed. Please retry.")
+    artifact = st.session_state["generated_artifact"]
+    if artifact and st.session_state["generated_artifact_type"] == artifact_type:
+        st.subheader("Artifact Preview"); display_generated_artifact(artifact)
+        try:
+            docx_bytes = build_artifact_docx(artifact)
+            filenames = {ArtifactType.PRD: "catalyst_ai_prd.docx", ArtifactType.USER_STORIES: "catalyst_ai_user_stories.docx", ArtifactType.TECHNICAL_SPECIFICATION: "catalyst_ai_technical_specification.docx"}
+            st.download_button("Download DOCX", docx_bytes, filenames[artifact.metadata.artifact_type], "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        except Exception: st.error("The artifact was generated, but the DOCX file could not be created.")
 
 def display_document_metadata(document_metadata: list[dict[str, Any]]) -> None:
     """Display uploaded document metadata in a Streamlit table."""
@@ -607,7 +691,10 @@ if uploaded_files:
         selected_stakeholder = display_stakeholder_perspective()
 
         st.divider()
-        display_ai_product_understanding(product_context, selected_stakeholder)
+        source_text, selected_context = display_ai_product_understanding(product_context, selected_stakeholder)
+
+        st.divider()
+        display_ai_artifact_generation(source_text, selected_context, selected_stakeholder)
 else:
     if st.session_state["product_context_hash"] is not None:
         reset_context_dependent_state()
