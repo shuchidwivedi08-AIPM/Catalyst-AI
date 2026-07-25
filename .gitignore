@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local configuration
+.env
+
+# Catalyst AI runtime data
+*.db
+*.db-shm
+*.db-wal
+data/uploads/*
+data/outputs/*
+data/vector_db/*
+
+# Keep runtime directories in source control when placeholders exist
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+!data/vector_db/.gitkeep
