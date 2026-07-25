@@ -23,6 +23,7 @@ _WORKFLOW_STATE_KEYS = {
 
 def initialize_project_session() -> None:
     st.session_state.setdefault("selected_project_id", None)
+    st.session_state.setdefault("project_view", "workflow")
 
 
 def _clear_workflow_session() -> None:
@@ -35,11 +36,13 @@ def select_project(project: Project) -> None:
     if st.session_state.get("selected_project_id") != project.id:
         _clear_workflow_session()
     st.session_state["selected_project_id"] = project.id
+    st.session_state["project_view"] = "workflow"
 
 
 def leave_project() -> None:
     _clear_workflow_session()
     st.session_state["selected_project_id"] = None
+    st.session_state["project_view"] = "workflow"
 
 
 def _format_activity(value: str) -> str:
@@ -111,12 +114,23 @@ def get_selected_project(user) -> Project | None:
         return None
 
 
+def get_project_view() -> str:
+    initialize_project_session()
+    return str(st.session_state.get("project_view", "workflow"))
+
+
 def render_project_sidebar(project: Project) -> None:
     with st.sidebar:
         st.caption("Active project")
         st.markdown(f"### {project.name}")
         st.caption(f"Role: {project.user_role.title()}")
         st.caption(f"Stage: {project.workflow_stage.replace('_', ' ').title()}")
+        if st.button("Workflow", use_container_width=True):
+            st.session_state["project_view"] = "workflow"
+            st.rerun()
+        if st.button("Members", use_container_width=True):
+            st.session_state["project_view"] = "members"
+            st.rerun()
         if st.button("Back to projects", use_container_width=True):
             leave_project()
             st.rerun()
