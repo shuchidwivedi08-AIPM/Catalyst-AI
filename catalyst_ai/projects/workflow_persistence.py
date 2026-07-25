@@ -157,6 +157,23 @@ def _deserialize_uploaded_files(records: list[dict[str, str]]) -> list[RestoredU
     return restored
 
 
+def determine_workflow_stage(product_context: dict[str, Any] | None) -> str:
+    """Return the furthest durable workflow milestone reached by the project."""
+    if st.session_state.get("generated_artifact") is not None:
+        return "ARTIFACT_GENERATION"
+    if st.session_state.get("product_understanding") is not None:
+        return "PRODUCT_UNDERSTANDING"
+    if st.session_state.get("validated_product_context") is not None:
+        return "VALIDATED_CONTEXT"
+    if st.session_state.get("discovery_result") is not None:
+        if st.session_state.get("discovery_resolutions"):
+            return "DISCOVERY_RESOLUTION"
+        return "DISCOVERY"
+    if product_context:
+        return "PRODUCT_CONTEXT"
+    return "DOCUMENT_UPLOAD"
+
+
 def load_project_workflow(project_id: int) -> list[RestoredUploadedFile]:
     """Restore one project's workflow state into the current Streamlit session."""
     initialize_workflow_persistence()
@@ -195,6 +212,7 @@ def save_project_workflow(project_id: int, workflow_module: Any) -> None:
     }
     encoded = json.dumps(snapshot, ensure_ascii=False)
     now = _utc_now()
+    workflow_stage = determine_workflow_stage(product_context)
     with database_connection() as connection:
         connection.execute(
             """
@@ -207,8 +225,12 @@ def save_project_workflow(project_id: int, workflow_module: Any) -> None:
             (project_id, encoded, now),
         )
         connection.execute(
-            "UPDATE projects SET last_activity_at = ?, updated_at = ? WHERE id = ?",
-            (now, now, project_id),
+            """
+            UPDATE projects
+            SET workflow_stage = ?, last_activity_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (workflow_stage, now, now, project_id),
         )
 
 
