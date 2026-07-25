@@ -16,6 +16,8 @@ _WORKFLOW_STATE_KEYS = {
     "product_understanding_context_source", "product_understanding_stakeholder",
     "product_understanding_source_hash", "generated_artifact",
     "generated_artifact_type", "generated_artifact_metadata",
+    "persisted_product_context", "restored_uploaded_files",
+    "workflow_state_loaded_project_id",
 }
 
 
