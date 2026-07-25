@@ -1,4 +1,4 @@
-"""Project membership administration services."""
+"""Project membership administration and user-directory services."""
 
 from __future__ import annotations
 
@@ -24,6 +24,15 @@ class ProjectMember:
     created_at: str
 
 
+@dataclass(frozen=True)
+class UserDirectoryEntry:
+    user_id: int
+    username: str
+    email: str
+    display_name: str
+    previous_membership_status: str | None = None
+
+
 class MembershipError(ValueError):
     """Raised when a membership action is invalid or unauthorized."""
 
@@ -43,6 +52,16 @@ def _actor_role(connection: sqlite3.Connection, project_id: int, actor_user_id: 
     if row is None:
         raise MembershipError("You do not have access to manage this project.")
     return str(row["role"])
+
+
+def _require_member_management(
+    connection: sqlite3.Connection, project_id: int, actor_user_id: int
+) -> None:
+    actor_role = _actor_role(connection, project_id, actor_user_id)
+    try:
+        require_permission(actor_role, "manage_members")
+    except PermissionError as exc:
+        raise MembershipError(str(exc)) from exc
 
 
 def _row_to_member(row: sqlite3.Row) -> ProjectMember:
@@ -84,42 +103,87 @@ def list_project_members(project_id: int, requesting_user_id: int) -> list[Proje
     return [_row_to_member(row) for row in rows]
 
 
+def search_available_users(
+    project_id: int,
+    actor_user_id: int,
+    query: str,
+    limit: int = 10,
+) -> list[UserDirectoryEntry]:
+    """Search active users not already active in the project."""
+    initialize_database()
+    normalized_query = query.strip()
+    if len(normalized_query) < 2:
+        return []
+    safe_limit = max(1, min(int(limit), 20))
+    pattern = f"%{normalized_query}%"
+    with database_connection() as connection:
+        _require_member_management(connection, project_id, actor_user_id)
+        rows = connection.execute(
+            """
+            SELECT u.id, u.username, u.email, u.display_name,
+                   pm.status AS previous_membership_status
+            FROM users u
+            LEFT JOIN project_memberships pm
+              ON pm.project_id = ? AND pm.user_id = u.id
+            WHERE u.status = 'ACTIVE'
+              AND (pm.status IS NULL OR pm.status != 'ACTIVE')
+              AND (
+                  u.display_name LIKE ? COLLATE NOCASE OR
+                  u.username LIKE ? COLLATE NOCASE OR
+                  u.email LIKE ? COLLATE NOCASE
+              )
+            ORDER BY u.display_name COLLATE NOCASE, u.username COLLATE NOCASE
+            LIMIT ?
+            """,
+            (project_id, pattern, pattern, pattern, safe_limit),
+        ).fetchall()
+    return [
+        UserDirectoryEntry(
+            user_id=int(row["id"]),
+            username=str(row["username"]),
+            email=str(row["email"]),
+            display_name=str(row["display_name"]),
+            previous_membership_status=row["previous_membership_status"],
+        )
+        for row in rows
+    ]
+
+
 def add_project_member(
     project_id: int,
     actor_user_id: int,
-    user_identifier: str,
+    user_identifier: str | int,
     role: str,
 ) -> ProjectMember:
-    """Add or reactivate an existing Catalyst AI user in a project."""
+    """Add or reactivate a selected existing Catalyst AI user."""
     initialize_database()
-    identifier = user_identifier.strip()
     normalized_role = role.strip().upper()
-    if not identifier:
-        raise MembershipError("Enter a username or email address.")
     if normalized_role not in ASSIGNABLE_ROLES:
         raise MembershipError("Select Admin, Editor, or Reviewer access.")
 
     now = _utc_now()
     with database_connection() as connection:
-        actor_role = _actor_role(connection, project_id, actor_user_id)
-        try:
-            require_permission(actor_role, "manage_members")
-        except PermissionError as exc:
-            raise MembershipError(str(exc)) from exc
-
-        user = connection.execute(
-            """
-            SELECT id FROM users
-            WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)
-              AND status = 'ACTIVE'
-            LIMIT 1
-            """,
-            (identifier, identifier),
-        ).fetchone()
+        _require_member_management(connection, project_id, actor_user_id)
+        if isinstance(user_identifier, int):
+            user = connection.execute(
+                "SELECT id FROM users WHERE id = ? AND status = 'ACTIVE' LIMIT 1",
+                (user_identifier,),
+            ).fetchone()
+        else:
+            identifier = user_identifier.strip()
+            if not identifier:
+                raise MembershipError("Select an existing Catalyst AI user.")
+            user = connection.execute(
+                """
+                SELECT id FROM users
+                WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)
+                  AND status = 'ACTIVE'
+                LIMIT 1
+                """,
+                (identifier, identifier),
+            ).fetchone()
         if user is None:
-            raise MembershipError(
-                "No active Catalyst AI account matches that username or email."
-            )
+            raise MembershipError("The selected active Catalyst AI user could not be found.")
         target_user_id = int(user["id"])
 
         existing = connection.execute(
@@ -170,11 +234,7 @@ def update_project_member_role(
         raise MembershipError("Select Admin, Editor, or Reviewer access.")
     now = _utc_now()
     with database_connection() as connection:
-        actor_role = _actor_role(connection, project_id, actor_user_id)
-        try:
-            require_permission(actor_role, "manage_members")
-        except PermissionError as exc:
-            raise MembershipError(str(exc)) from exc
+        _require_member_management(connection, project_id, actor_user_id)
         target = connection.execute(
             "SELECT role, status FROM project_memberships WHERE project_id = ? AND user_id = ?",
             (project_id, target_user_id),
@@ -193,11 +253,7 @@ def remove_project_member(project_id: int, actor_user_id: int, target_user_id: i
     """Remove a non-owner member while retaining membership history."""
     now = _utc_now()
     with database_connection() as connection:
-        actor_role = _actor_role(connection, project_id, actor_user_id)
-        try:
-            require_permission(actor_role, "manage_members")
-        except PermissionError as exc:
-            raise MembershipError(str(exc)) from exc
+        _require_member_management(connection, project_id, actor_user_id)
         target = connection.execute(
             "SELECT role, status FROM project_memberships WHERE project_id = ? AND user_id = ?",
             (project_id, target_user_id),
