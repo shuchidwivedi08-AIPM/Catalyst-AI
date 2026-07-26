@@ -16,6 +16,7 @@ _PERMISSION_ROLES = {
     "modify_workflow": {"OWNER", "ADMIN", "EDITOR"},
     "view_knowledge": set(PROJECT_ROLES),
     "manage_knowledge": {"OWNER", "ADMIN", "EDITOR"},
+    "delete_knowledge": {"OWNER"},
     "manage_members": {"OWNER", "ADMIN"},
     "change_project_settings": {"OWNER", "ADMIN"},
     "archive_project": {"OWNER"},

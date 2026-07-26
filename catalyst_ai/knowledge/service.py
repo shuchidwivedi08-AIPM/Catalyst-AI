@@ -30,6 +30,7 @@ class KnowledgeDocument:
     status: str
     size_bytes: int
     uploaded_by_user_id: int
+    uploader_display_name: str
     created_at: str
     updated_at: str
     archived_at: str | None
@@ -73,6 +74,9 @@ def initialize_knowledge_repository() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_project_status ON knowledge_documents(project_id, status)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_project_name ON knowledge_documents(project_id, file_name, version)"
+        )
 
 
 def _actor_role(connection, project_id: int, user_id: int) -> str:
@@ -87,31 +91,67 @@ def _actor_role(connection, project_id: int, user_id: int) -> str:
 
 def _row_to_document(row) -> KnowledgeDocument:
     return KnowledgeDocument(
-        id=str(row["id"]), project_id=int(row["project_id"]), scope=str(row["scope"]),
-        file_name=str(row["file_name"]), file_type=str(row["file_type"]), mime_type=str(row["mime_type"]),
-        storage_path=str(row["storage_path"]), checksum=str(row["checksum"]), version=int(row["version"]),
-        status=str(row["status"]), size_bytes=int(row["size_bytes"]), uploaded_by_user_id=int(row["uploaded_by_user_id"]),
-        created_at=str(row["created_at"]), updated_at=str(row["updated_at"]), archived_at=row["archived_at"],
+        id=str(row["id"]),
+        project_id=int(row["project_id"]),
+        scope=str(row["scope"]),
+        file_name=str(row["file_name"]),
+        file_type=str(row["file_type"]),
+        mime_type=str(row["mime_type"]),
+        storage_path=str(row["storage_path"]),
+        checksum=str(row["checksum"]),
+        version=int(row["version"]),
+        status=str(row["status"]),
+        size_bytes=int(row["size_bytes"]),
+        uploaded_by_user_id=int(row["uploaded_by_user_id"]),
+        uploader_display_name=str(row.get("uploader_display_name") or f"User {row['uploaded_by_user_id']}"),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        archived_at=row["archived_at"],
     )
 
 
-def list_knowledge_documents(project_id: int, requesting_user_id: int, include_archived: bool = False) -> list[KnowledgeDocument]:
+def _select_document(connection, document_id: str, project_id: int):
+    return connection.execute(
+        """
+        SELECT kd.*, u.display_name AS uploader_display_name
+        FROM knowledge_documents kd
+        JOIN users u ON u.id = kd.uploaded_by_user_id
+        WHERE kd.id = ? AND kd.project_id = ?
+        """,
+        (document_id, project_id),
+    ).fetchone()
+
+
+def list_knowledge_documents(
+    project_id: int,
+    requesting_user_id: int,
+    include_archived: bool = False,
+) -> list[KnowledgeDocument]:
     initialize_knowledge_repository()
     with database_connection() as connection:
         _actor_role(connection, project_id, requesting_user_id)
-        archived_clause = "" if include_archived else "AND status != 'ARCHIVED'"
+        archived_clause = "" if include_archived else "AND kd.status != 'ARCHIVED'"
         rows = connection.execute(
             f"""
-            SELECT * FROM knowledge_documents
-            WHERE project_id = ? {archived_clause}
-            ORDER BY file_name, version DESC, created_at DESC
+            SELECT kd.*, u.display_name AS uploader_display_name
+            FROM knowledge_documents kd
+            JOIN users u ON u.id = kd.uploaded_by_user_id
+            WHERE kd.project_id = ? {archived_clause}
+            ORDER BY kd.created_at DESC, kd.file_name, kd.version DESC
             """,
             (project_id,),
         ).fetchall()
     return [_row_to_document(row) for row in rows]
 
 
-def upload_knowledge_document(project_id: int, actor_user_id: int, file_name: str, mime_type: str, content: bytes, scope: str = "PROJECT") -> KnowledgeDocument:
+def upload_knowledge_document(
+    project_id: int,
+    actor_user_id: int,
+    file_name: str,
+    mime_type: str,
+    content: bytes,
+    scope: str = "PROJECT",
+) -> KnowledgeDocument:
     initialize_knowledge_repository()
     clean_name = Path(file_name).name.strip()
     extension = Path(clean_name).suffix.lower().lstrip(".")
@@ -150,30 +190,50 @@ def upload_knowledge_document(project_id: int, actor_user_id: int, file_name: st
         storage_path = f"projects/{project_id}/knowledge/{document_id}/v{version}/{safe_name}"
 
     upload_object(storage_path, content, mime_type or "application/octet-stream")
-    with database_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO knowledge_documents (
-                id, project_id, scope, file_name, file_type, mime_type, storage_path,
-                checksum, version, status, size_bytes, uploaded_by_user_id,
-                created_at, updated_at, archived_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?, ?, ?, NULL)
-            """,
-            (document_id, project_id, normalized_scope, clean_name, extension, mime_type or "application/octet-stream",
-             storage_path, checksum, version, len(content), actor_user_id, now, now),
-        )
-        row = connection.execute("SELECT * FROM knowledge_documents WHERE id = ?", (document_id,)).fetchone()
+    try:
+        with database_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO knowledge_documents (
+                    id, project_id, scope, file_name, file_type, mime_type, storage_path,
+                    checksum, version, status, size_bytes, uploaded_by_user_id,
+                    created_at, updated_at, archived_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?, ?, ?, NULL)
+                """,
+                (
+                    document_id,
+                    project_id,
+                    normalized_scope,
+                    clean_name,
+                    extension,
+                    mime_type or "application/octet-stream",
+                    storage_path,
+                    checksum,
+                    version,
+                    len(content),
+                    actor_user_id,
+                    now,
+                    now,
+                ),
+            )
+            row = _select_document(connection, document_id, project_id)
+    except Exception:
+        try:
+            delete_object(storage_path)
+        finally:
+            raise
     return _row_to_document(row)
 
 
-def download_knowledge_document(project_id: int, requesting_user_id: int, document_id: str) -> tuple[KnowledgeDocument, bytes]:
+def download_knowledge_document(
+    project_id: int,
+    requesting_user_id: int,
+    document_id: str,
+) -> tuple[KnowledgeDocument, bytes]:
     initialize_knowledge_repository()
     with database_connection() as connection:
         _actor_role(connection, project_id, requesting_user_id)
-        row = connection.execute(
-            "SELECT * FROM knowledge_documents WHERE id = ? AND project_id = ? AND status != 'ARCHIVED'",
-            (document_id, project_id),
-        ).fetchone()
+        row = _select_document(connection, document_id, project_id)
     if row is None:
         raise KnowledgeError("Knowledge document not found.")
     document = _row_to_document(row)
@@ -181,6 +241,7 @@ def download_knowledge_document(project_id: int, requesting_user_id: int, docume
 
 
 def archive_knowledge_document(project_id: int, actor_user_id: int, document_id: str) -> None:
+    """Archive metadata while retaining the original object for history and restoration."""
     initialize_knowledge_repository()
     now = _utc_now()
     with database_connection() as connection:
@@ -190,16 +251,62 @@ def archive_knowledge_document(project_id: int, actor_user_id: int, document_id:
         except PermissionError as exc:
             raise KnowledgeError(str(exc)) from exc
         row = connection.execute(
-            "SELECT storage_path FROM knowledge_documents WHERE id = ? AND project_id = ? AND status != 'ARCHIVED'",
+            "SELECT id FROM knowledge_documents WHERE id = ? AND project_id = ? AND status != 'ARCHIVED'",
             (document_id, project_id),
         ).fetchone()
         if row is None:
-            raise KnowledgeError("Knowledge document not found.")
+            raise KnowledgeError("Knowledge document not found or already archived.")
         connection.execute(
             "UPDATE knowledge_documents SET status = 'ARCHIVED', archived_at = ?, updated_at = ? WHERE id = ?",
             (now, now, document_id),
         )
-    try:
-        delete_object(str(row["storage_path"]))
-    except Exception:
-        pass
+
+
+def restore_knowledge_document(project_id: int, actor_user_id: int, document_id: str) -> None:
+    initialize_knowledge_repository()
+    now = _utc_now()
+    with database_connection() as connection:
+        role = _actor_role(connection, project_id, actor_user_id)
+        try:
+            require_permission(role, "manage_knowledge")
+        except PermissionError as exc:
+            raise KnowledgeError(str(exc)) from exc
+        row = connection.execute(
+            "SELECT id FROM knowledge_documents WHERE id = ? AND project_id = ? AND status = 'ARCHIVED'",
+            (document_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise KnowledgeError("Archived knowledge document not found.")
+        connection.execute(
+            "UPDATE knowledge_documents SET status = 'READY', archived_at = NULL, updated_at = ? WHERE id = ?",
+            (now, document_id),
+        )
+
+
+def permanently_delete_knowledge_document(
+    project_id: int,
+    actor_user_id: int,
+    document_id: str,
+) -> None:
+    """Permanently remove an archived document. This action is Owner-only."""
+    initialize_knowledge_repository()
+    with database_connection() as connection:
+        role = _actor_role(connection, project_id, actor_user_id)
+        try:
+            require_permission(role, "delete_knowledge")
+        except PermissionError as exc:
+            raise KnowledgeError(str(exc)) from exc
+        row = connection.execute(
+            "SELECT storage_path FROM knowledge_documents WHERE id = ? AND project_id = ? AND status = 'ARCHIVED'",
+            (document_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise KnowledgeError("Only archived knowledge documents can be permanently deleted.")
+        storage_path = str(row["storage_path"])
+
+    delete_object(storage_path)
+    with database_connection() as connection:
+        connection.execute(
+            "DELETE FROM knowledge_documents WHERE id = ? AND project_id = ? AND status = 'ARCHIVED'",
+            (document_id, project_id),
+        )
