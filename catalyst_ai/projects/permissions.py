@@ -14,6 +14,8 @@ ASSIGNABLE_ROLES = ("ADMIN", "EDITOR", "REVIEWER")
 _PERMISSION_ROLES = {
     "view_project": set(PROJECT_ROLES),
     "modify_workflow": {"OWNER", "ADMIN", "EDITOR"},
+    "view_knowledge": set(PROJECT_ROLES),
+    "manage_knowledge": {"OWNER", "ADMIN", "EDITOR"},
     "manage_members": {"OWNER", "ADMIN"},
     "change_project_settings": {"OWNER", "ADMIN"},
     "archive_project": {"OWNER"},
