@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import sqlite3
+from typing import Any, Mapping
 
-from catalyst_ai.auth.database import database_connection, initialize_database
+from catalyst_ai.auth.database import CompatibleConnection, database_connection, initialize_database
 from catalyst_ai.projects.permissions import ASSIGNABLE_ROLES, require_permission
 
 
@@ -41,7 +41,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _actor_role(connection: sqlite3.Connection, project_id: int, actor_user_id: int) -> str:
+def _actor_role(connection: CompatibleConnection, project_id: int, actor_user_id: int) -> str:
     row = connection.execute(
         """
         SELECT role FROM project_memberships
@@ -55,7 +55,7 @@ def _actor_role(connection: sqlite3.Connection, project_id: int, actor_user_id: 
 
 
 def _require_member_management(
-    connection: sqlite3.Connection, project_id: int, actor_user_id: int
+    connection: CompatibleConnection, project_id: int, actor_user_id: int
 ) -> None:
     actor_role = _actor_role(connection, project_id, actor_user_id)
     try:
@@ -64,7 +64,7 @@ def _require_member_management(
         raise MembershipError(str(exc)) from exc
 
 
-def _row_to_member(row: sqlite3.Row) -> ProjectMember:
+def _row_to_member(row: Mapping[str, Any]) -> ProjectMember:
     return ProjectMember(
         membership_id=int(row["membership_id"]),
         project_id=int(row["project_id"]),
@@ -96,7 +96,7 @@ def list_project_members(project_id: int, requesting_user_id: int) -> list[Proje
             ORDER BY CASE pm.role
                 WHEN 'OWNER' THEN 1 WHEN 'ADMIN' THEN 2
                 WHEN 'EDITOR' THEN 3 ELSE 4 END,
-                u.display_name COLLATE NOCASE
+                LOWER(u.display_name)
             """,
             (project_id,),
         ).fetchall()
@@ -128,11 +128,11 @@ def search_available_users(
             WHERE u.status = 'ACTIVE'
               AND (pm.status IS NULL OR pm.status != 'ACTIVE')
               AND (
-                  u.display_name LIKE ? COLLATE NOCASE OR
-                  u.username LIKE ? COLLATE NOCASE OR
-                  u.email LIKE ? COLLATE NOCASE
+                  LOWER(u.display_name) LIKE LOWER(?) OR
+                  LOWER(u.username) LIKE LOWER(?) OR
+                  LOWER(u.email) LIKE LOWER(?)
               )
-            ORDER BY u.display_name COLLATE NOCASE, u.username COLLATE NOCASE
+            ORDER BY LOWER(u.display_name), LOWER(u.username)
             LIMIT ?
             """,
             (project_id, pattern, pattern, pattern, safe_limit),
