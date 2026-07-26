@@ -7,7 +7,10 @@ from catalyst_ai.knowledge import service as knowledge_service
 from catalyst_ai.knowledge.service import (
     KnowledgeError,
     archive_knowledge_document,
+    download_knowledge_document,
     list_knowledge_documents,
+    permanently_delete_knowledge_document,
+    restore_knowledge_document,
     upload_knowledge_document,
 )
 from catalyst_ai.projects.members import add_project_member
@@ -42,7 +45,9 @@ def test_editor_can_upload_and_versions_increment(knowledge_database):
     second = upload_knowledge_document(project.id, editor.id, "standards.txt", "text/plain", b"version two")
     assert first.version == 1
     assert second.version == 2
-    assert len(list_knowledge_documents(project.id, reviewer.id)) == 2
+    documents = list_knowledge_documents(project.id, reviewer.id)
+    assert len(documents) == 2
+    assert {document.uploader_display_name for document in documents} == {"Editor"}
 
 
 def test_duplicate_content_is_rejected(knowledge_database):
@@ -52,17 +57,50 @@ def test_duplicate_content_is_rejected(knowledge_database):
         upload_knowledge_document(project.id, editor.id, "copy.txt", "text/plain", b"same content")
 
 
-def test_reviewer_cannot_upload_but_can_list(knowledge_database):
+def test_reviewer_cannot_upload_but_can_list_and_download(knowledge_database):
     owner, editor, reviewer, project = _users_and_project()
-    upload_knowledge_document(project.id, owner.id, "policy.txt", "text/plain", b"policy")
+    document = upload_knowledge_document(project.id, owner.id, "policy.txt", "text/plain", b"policy")
     assert len(list_knowledge_documents(project.id, reviewer.id)) == 1
+    downloaded, content = download_knowledge_document(project.id, reviewer.id, document.id)
+    assert downloaded.file_name == "policy.txt"
+    assert content == b"policy"
     with pytest.raises(KnowledgeError, match="permission"):
         upload_knowledge_document(project.id, reviewer.id, "review.txt", "text/plain", b"review")
 
 
-def test_archive_hides_document(knowledge_database):
+def test_archive_preserves_storage_and_can_be_restored(knowledge_database):
     owner, editor, reviewer, project = _users_and_project()
     document = upload_knowledge_document(project.id, owner.id, "policy.txt", "text/plain", b"policy")
     archive_knowledge_document(project.id, owner.id, document.id)
+
     assert list_knowledge_documents(project.id, owner.id) == []
-    assert len(list_knowledge_documents(project.id, owner.id, include_archived=True)) == 1
+    archived = list_knowledge_documents(project.id, owner.id, include_archived=True)
+    assert len(archived) == 1
+    assert archived[0].status == "ARCHIVED"
+    assert document.storage_path in knowledge_database
+    assert download_knowledge_document(project.id, reviewer.id, document.id)[1] == b"policy"
+
+    restore_knowledge_document(project.id, editor.id, document.id)
+    restored = list_knowledge_documents(project.id, owner.id)
+    assert len(restored) == 1
+    assert restored[0].status == "READY"
+
+
+def test_only_owner_can_permanently_delete_archived_document(knowledge_database):
+    owner, editor, reviewer, project = _users_and_project()
+    document = upload_knowledge_document(project.id, owner.id, "obsolete.txt", "text/plain", b"obsolete")
+    archive_knowledge_document(project.id, editor.id, document.id)
+
+    with pytest.raises(KnowledgeError, match="permission"):
+        permanently_delete_knowledge_document(project.id, editor.id, document.id)
+
+    permanently_delete_knowledge_document(project.id, owner.id, document.id)
+    assert document.storage_path not in knowledge_database
+    assert list_knowledge_documents(project.id, owner.id, include_archived=True) == []
+
+
+def test_permanent_delete_requires_archive_first(knowledge_database):
+    owner, editor, reviewer, project = _users_and_project()
+    document = upload_knowledge_document(project.id, owner.id, "active.txt", "text/plain", b"active")
+    with pytest.raises(KnowledgeError, match="Only archived"):
+        permanently_delete_knowledge_document(project.id, owner.id, document.id)
