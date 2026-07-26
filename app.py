@@ -7,6 +7,8 @@ import streamlit as st
 
 from catalyst_ai.auth.database import initialize_database
 from catalyst_ai.auth.ui import require_authenticated_user, render_authenticated_sidebar
+from catalyst_ai.knowledge.service import initialize_knowledge_repository
+from catalyst_ai.knowledge.ui import render_project_knowledge
 from catalyst_ai.projects.member_ui import render_project_members
 from catalyst_ai.projects.permissions import has_permission, read_only_workflow
 from catalyst_ai.projects.ui import (
@@ -25,6 +27,7 @@ from catalyst_ai.projects.workflow_persistence import (
 
 initialize_database()
 initialize_workflow_persistence()
+initialize_knowledge_repository()
 current_user = require_authenticated_user()
 selected_project = get_selected_project(current_user)
 
@@ -35,8 +38,11 @@ else:
     render_project_sidebar(selected_project)
     render_authenticated_sidebar(current_user)
 
-    if get_project_view() == "members":
+    project_view = get_project_view()
+    if project_view == "members":
         render_project_members(selected_project, current_user)
+    elif project_view == "knowledge":
+        render_project_knowledge(selected_project, current_user)
     else:
         loaded_project_id = st.session_state.get("workflow_state_loaded_project_id")
         if loaded_project_id != selected_project.id:
@@ -53,8 +59,6 @@ else:
                 "and download generated artifacts, but cannot change project content."
             )
 
-        # Execute the validated workflow inside the selected project boundary. Reviewers
-        # receive the same persisted content with all mutation controls disabled.
         with restored_file_uploader(restored_files):
             with read_only_workflow(enabled=not can_modify):
                 module_name = "catalyst_ai.workflow_app"
