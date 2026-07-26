@@ -27,6 +27,7 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
 )
 from sqlalchemy.engine import Connection, Engine, Result
 from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
@@ -170,7 +171,7 @@ def _get_engine(database_path: Path | None = None) -> Engine:
 
 
 def _prepare_sql(sql: str, parameters: Sequence[Any] | Mapping[str, Any] | None):
-    """Translate the legacy qmark SQL into SQLAlchemy named parameters."""
+    """Translate legacy qmark SQL and SQLite case-insensitive comparisons."""
     sql = re.sub(
         r"([A-Za-z_][A-Za-z0-9_.]*)\s*=\s*\?\s+COLLATE\s+NOCASE",
         r"LOWER(\1) = LOWER(?)",
@@ -223,7 +224,7 @@ class CompatibleConnection:
         parameters: Sequence[Any] | Mapping[str, Any] | None = None,
     ) -> CompatibleResult:
         translated, bindings = _prepare_sql(sql, parameters)
-        return CompatibleResult(self._connection.exec_driver_sql(translated, bindings))
+        return CompatibleResult(self._connection.execute(text(translated), bindings))
 
 
 @contextmanager
