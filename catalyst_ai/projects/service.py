@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import sqlite3
+from typing import Any, Mapping
 
 from catalyst_ai.auth.database import database_connection, initialize_database
 from catalyst_ai.projects.models import Project
@@ -17,7 +17,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _row_to_project(row: sqlite3.Row) -> Project:
+def _row_to_project(row: Mapping[str, Any]) -> Project:
     return Project(
         id=int(row["id"]),
         name=str(row["name"]),
@@ -51,16 +51,17 @@ def create_project(user_id: int, name: str, description: str = "") -> Project:
         if user is None:
             raise ProjectError("The current user cannot create projects.")
 
-        cursor = connection.execute(
+        inserted = connection.execute(
             """
             INSERT INTO projects (
                 name, description, owner_user_id, created_by_user_id,
                 status, workflow_stage, created_at, updated_at, last_activity_at
             ) VALUES (?, ?, ?, ?, 'ACTIVE', 'DOCUMENT_UPLOAD', ?, ?, ?)
+            RETURNING id
             """,
             (name, description, user_id, user_id, now, now, now),
-        )
-        project_id = int(cursor.lastrowid)
+        ).fetchone()
+        project_id = int(inserted["id"])
         connection.execute(
             """
             INSERT INTO project_memberships (

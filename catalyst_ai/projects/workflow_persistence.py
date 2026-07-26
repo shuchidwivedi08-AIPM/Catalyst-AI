@@ -1,7 +1,6 @@
 """Project-scoped persistence for the Catalyst AI workflow."""
 
 from __future__ import annotations
-
 import base64
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -20,7 +19,7 @@ from catalyst_ai.ai.schemas import (
     ProductUnderstanding,
     ValidatedProductContext,
 )
-from catalyst_ai.auth.database import database_connection
+from catalyst_ai.auth.database import database_connection, initialize_database
 
 
 PERSISTED_SESSION_KEYS = (
@@ -60,18 +59,8 @@ def _utc_now() -> str:
 
 
 def initialize_workflow_persistence() -> None:
-    """Create the single-snapshot persistence table when needed."""
-    with database_connection() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS project_workflow_snapshots (
-                project_id INTEGER PRIMARY KEY,
-                snapshot_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-            );
-            """
-        )
+    """Ensure the shared schema, including workflow snapshots, is current."""
+    initialize_database()
 
 
 def _model_payload(value: Any) -> Any:
@@ -157,23 +146,6 @@ def _deserialize_uploaded_files(records: list[dict[str, str]]) -> list[RestoredU
     return restored
 
 
-def determine_workflow_stage(product_context: dict[str, Any] | None) -> str:
-    """Return the furthest durable workflow milestone reached by the project."""
-    if st.session_state.get("generated_artifact") is not None:
-        return "ARTIFACT_GENERATION"
-    if st.session_state.get("product_understanding") is not None:
-        return "PRODUCT_UNDERSTANDING"
-    if st.session_state.get("validated_product_context") is not None:
-        return "VALIDATED_CONTEXT"
-    if st.session_state.get("discovery_result") is not None:
-        if st.session_state.get("discovery_resolutions"):
-            return "DISCOVERY_RESOLUTION"
-        return "DISCOVERY"
-    if product_context:
-        return "PRODUCT_CONTEXT"
-    return "DOCUMENT_UPLOAD"
-
-
 def load_project_workflow(project_id: int) -> list[RestoredUploadedFile]:
     """Restore one project's workflow state into the current Streamlit session."""
     initialize_workflow_persistence()
@@ -191,6 +163,23 @@ def load_project_workflow(project_id: int) -> list[RestoredUploadedFile]:
         st.session_state[key] = value
     st.session_state["persisted_product_context"] = snapshot.get("product_context")
     return _deserialize_uploaded_files(snapshot.get("uploaded_files", []))
+
+
+def _derive_workflow_stage(snapshot: dict[str, Any]) -> str:
+    session = snapshot["session"]
+    if session.get("generated_artifact"):
+        return "ARTIFACT_GENERATION"
+    if session.get("product_understanding"):
+        return "PRODUCT_UNDERSTANDING"
+    if session.get("validated_product_context"):
+        return "VALIDATED_CONTEXT"
+    if session.get("discovery_resolutions"):
+        return "DISCOVERY_RESOLUTION"
+    if session.get("discovery_result"):
+        return "DISCOVERY"
+    if snapshot.get("product_context"):
+        return "PRODUCT_CONTEXT"
+    return "DOCUMENT_UPLOAD"
 
 
 def save_project_workflow(project_id: int, workflow_module: Any) -> None:
@@ -212,7 +201,7 @@ def save_project_workflow(project_id: int, workflow_module: Any) -> None:
     }
     encoded = json.dumps(snapshot, ensure_ascii=False)
     now = _utc_now()
-    workflow_stage = determine_workflow_stage(product_context)
+    workflow_stage = _derive_workflow_stage(snapshot)
     with database_connection() as connection:
         connection.execute(
             """

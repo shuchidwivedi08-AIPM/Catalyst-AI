@@ -7,9 +7,13 @@ import hashlib
 import hmac
 import re
 import secrets
-import sqlite3
+from typing import Mapping, Any
 
-from catalyst_ai.auth.database import database_connection, initialize_database
+from catalyst_ai.auth.database import (
+    DatabaseIntegrityError,
+    database_connection,
+    initialize_database,
+)
 from catalyst_ai.auth.models import User
 
 
@@ -64,7 +68,7 @@ def verify_password(password: str, encoded_hash: str) -> bool:
         return False
 
 
-def _row_to_user(row: sqlite3.Row) -> User:
+def _row_to_user(row: Mapping[str, Any]) -> User:
     return User(
         id=int(row["id"]),
         username=str(row["username"]),
@@ -135,19 +139,20 @@ def _create_user(username: str, email: str, display_name: str, password: str) ->
     now = _utc_now()
     try:
         with database_connection() as connection:
-            cursor = connection.execute(
+            inserted = connection.execute(
                 """
                 INSERT INTO users (
                     username, email, password_hash, display_name, status,
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)
+                RETURNING id
                 """,
                 (username, email, hash_password(password), display_name, now, now),
-            )
-            row = connection.execute(
-                "SELECT * FROM users WHERE id = ?", (int(cursor.lastrowid),)
             ).fetchone()
-    except sqlite3.IntegrityError as exc:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ?", (int(inserted["id"]),)
+            ).fetchone()
+    except DatabaseIntegrityError as exc:
         raise RegistrationError(
             "That username or email was registered moments ago. Try another value or sign in."
         ) from exc
