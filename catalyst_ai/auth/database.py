@@ -29,8 +29,9 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.engine import Connection, Engine, Result
+from sqlalchemy.engine import Connection, Engine, Result, make_url
 from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
+from sqlalchemy.pool import NullPool
 
 
 DEFAULT_DATABASE_PATH = Path("data/catalyst_ai.db")
@@ -38,6 +39,8 @@ _SCHEMA_VERSION = 1
 _metadata = MetaData()
 _engine_cache: dict[str, Engine] = {}
 _engine_lock = Lock()
+_schema_lock = Lock()
+_initialized_schema_urls: set[str] = set()
 
 users = Table(
     "users",
@@ -157,6 +160,17 @@ def is_postgresql(database_path: Path | None = None) -> bool:
     return get_database_url(database_path).startswith("postgresql+")
 
 
+def _is_transaction_pooler(url: str) -> bool:
+    """Return whether the URL targets Supabase/Supavisor transaction mode."""
+    parsed = make_url(url)
+    return (
+        parsed.get_backend_name() == "postgresql"
+        and parsed.port == 6543
+        and bool(parsed.host)
+        and "pooler.supabase.com" in parsed.host
+    )
+
+
 def _get_engine(database_path: Path | None = None) -> Engine:
     url = get_database_url(database_path)
     with _engine_lock:
@@ -165,6 +179,12 @@ def _get_engine(database_path: Path | None = None) -> Engine:
             options: dict[str, Any] = {"pool_pre_ping": True}
             if url.startswith("sqlite:"):
                 options["connect_args"] = {"check_same_thread": False}
+            elif _is_transaction_pooler(url):
+                # Supabase transaction mode already pools server connections. Avoid
+                # a second client-side pool and disable Psycopg prepared statements,
+                # which transaction mode does not support reliably.
+                options["poolclass"] = NullPool
+                options["connect_args"] = {"prepare_threshold": None}
             engine = create_engine(url, **options)
             _engine_cache[url] = engine
         return engine
@@ -238,17 +258,25 @@ def database_connection(database_path: Path | None = None) -> Iterator[Compatibl
 
 
 def initialize_database(database_path: Path | None = None) -> None:
-    """Apply idempotent schema migrations to the configured database."""
-    engine = _get_engine(database_path)
-    _metadata.create_all(engine)
-    with engine.begin() as connection:
-        current = connection.execute(select(func.max(schema_migrations.c.version))).scalar()
-        if not current or int(current) < _SCHEMA_VERSION:
-            from datetime import datetime, timezone
+    """Apply schema migrations once per database URL for this app process."""
+    url = get_database_url(database_path)
+    if url in _initialized_schema_urls:
+        return
 
-            connection.execute(
-                schema_migrations.insert().values(
-                    version=_SCHEMA_VERSION,
-                    applied_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    with _schema_lock:
+        if url in _initialized_schema_urls:
+            return
+        engine = _get_engine(database_path)
+        _metadata.create_all(engine)
+        with engine.begin() as connection:
+            current = connection.execute(select(func.max(schema_migrations.c.version))).scalar()
+            if not current or int(current) < _SCHEMA_VERSION:
+                from datetime import datetime, timezone
+
+                connection.execute(
+                    schema_migrations.insert().values(
+                        version=_SCHEMA_VERSION,
+                        applied_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                    )
                 )
-            )
+        _initialized_schema_urls.add(url)
