@@ -28,7 +28,7 @@ def initialize_project_session() -> None:
 
 def _clear_workflow_session() -> None:
     for key in list(st.session_state):
-        if key in _WORKFLOW_STATE_KEYS or key.startswith(("status_", "answer_", "save_")):
+        if key in _WORKFLOW_STATE_KEYS or key.startswith(("status_", "answer_", "save_", "knowledge_download_")):
             del st.session_state[key]
 
 
@@ -127,6 +127,9 @@ def render_project_sidebar(project: Project) -> None:
         st.caption(f"Stage: {project.workflow_stage.replace('_', ' ').title()}")
         if st.button("Workflow", use_container_width=True):
             st.session_state["project_view"] = "workflow"
+            st.rerun()
+        if st.button("Knowledge", use_container_width=True):
+            st.session_state["project_view"] = "knowledge"
             st.rerun()
         if st.button("Members", use_container_width=True):
             st.session_state["project_view"] = "members"
