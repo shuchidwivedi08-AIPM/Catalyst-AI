@@ -1,0 +1,17 @@
+.git
+.github
+.gitignore
+.env
+.env.*
+.streamlit/secrets.toml
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+*.db
+*.db-shm
+*.db-wal
+data/uploads/*
+data/outputs/*
+data/vector_db/*
+README.md
